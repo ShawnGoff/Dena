@@ -83,6 +83,8 @@ export interface NewLink {
   fromSourceEventId: string;
   toSourceEventId: string;
   source: string;
+  /** Source of the target event when it differs from `source` (cross-source links). */
+  toSource?: string;
   linkType: LinkType;
   strength: LinkStrength;
   basis: string; // human-readable reason the link exists

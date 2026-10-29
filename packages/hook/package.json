@@ -1,0 +1,7 @@
+{
+  "name": "@dena/hook",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Dependency-free Claude Code hook forwarder; runs inside the user's session"
+}

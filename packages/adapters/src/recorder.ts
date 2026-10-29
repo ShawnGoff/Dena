@@ -5,6 +5,7 @@ import { correlate, type Store } from "@dena/core";
 import * as claudeCode from "./claude-code/transcript.ts";
 import * as git from "./git/git.ts";
 import { FsCapture } from "./fs/watcher.ts";
+import { ingestHooks } from "./claude-code/hooks.ts";
 
 /**
  * Runs every capture source for one project. Each source is independent: a failure in one
@@ -24,9 +25,8 @@ export function transcriptFiles(root: string, scope: "own" | "all", claudeHome =
   const base = path.join(claudeHome, "projects");
   if (!fs.existsSync(base)) return [];
   return fs.readdirSync(base).flatMap((d) => {
-    const dir = path.join(base, d);
     try {
-      return fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl")).map((f) => path.join(dir, f));
+      return claudeCode.transcriptsIn(path.join(base, d));
     } catch {
       return [];
     }
@@ -115,7 +115,17 @@ export class Recorder {
     this.startFs();
     await this.tick();
     this.timer = setInterval(() => void this.tick(), this.opts.pollMs ?? 5_000);
+    // Hook calls ring the doorbell: react within a second instead of waiting for the next poll.
+    const spool = path.join(this.store.home, "spool");
+    fs.mkdirSync(spool, { recursive: true });
+    let bell: NodeJS.Timeout | null = null;
+    this.spoolWatcher = fs.watch(spool, () => {
+      if (bell) clearTimeout(bell);
+      bell = setTimeout(() => void this.tick(), 500);
+    });
   }
+
+  private spoolWatcher: fs.FSWatcher | null = null;
 
   private startFs() {
     this.fs = new FsCapture(this.store, this.projectId, this.root, {
@@ -148,9 +158,12 @@ export class Recorder {
         this.log("resumed");
       }
       if (this.state !== "recording") return;
+      const h = await ingestHooks(this.store, this.projectId, this.root);
+      if (h.events || h.fallbacks)
+        this.log(`hooks: +${h.events} events from ${h.records} hook calls${h.fallbacks ? `, ${h.fallbacks} missing from transcripts` : ""}`);
       const g = importGitIfChanged(this.store, this.projectId, this.root, (m) => this.log(m));
       const c = await importChangedTranscripts(this.store, this.projectId, this.root, this.opts);
-      if (g || c) correlate(this.store, this.projectId);
+      if (g || c || h.transcriptsImported) correlate(this.store, this.projectId);
     } catch (err) {
       this.log(`recorder: ${(err as Error).message}`);
     } finally {
@@ -160,11 +173,13 @@ export class Recorder {
 
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
+    this.spoolWatcher?.close();
     this.fs?.stop();
     if (this.state === "recording") {
       this.state = "stopped"; // so a final tick does not restart anything
       importGitIfChanged(this.store, this.projectId, this.root);
       await importChangedTranscripts(this.store, this.projectId, this.root, this.opts);
+      await ingestHooks(this.store, this.projectId, this.root, { final: true }); // after transcripts, so only real misses become fallbacks
     }
     correlate(this.store, this.projectId);
     const now = new Date().toISOString();

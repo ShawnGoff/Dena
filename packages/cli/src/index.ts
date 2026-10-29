@@ -2,7 +2,7 @@
 import os from "node:os";
 import path from "node:path";
 import { correlate, Store, type StoredEvent } from "@dena/core";
-import { claudeCode, git, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
+import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
 
 const HOME = process.env.DENA_HOME ?? path.join(os.homedir(), ".dena");
 const [cmd, ...args] = process.argv.slice(2);
@@ -25,6 +25,9 @@ const USAGE = `dena <command>
   correlate <project>            link related events across sources
   exclude <project> <pattern>    add an excluded path (e.g. "generated/", "*.csv")
   gaps <project>                 known holes in what was captured
+  hooks status|install|uninstall <project> [--scope project|user] [--yes]
+                                 live Claude Code capture; shows the change first, writes only with --yes
+  ingest-hooks <project>         process hook calls collected while not recording
   timeline <project> [--session S] [--all]
                                  activity grouped by prompt
   show <project> <eventId>       one event with its links and artifacts
@@ -52,7 +55,7 @@ function printGroup(prompt: StoredEvent | null, children: StoredEvent[], all: bo
   if (parts.length) console.log(`    ${parts.join(", ")}`);
   const notable = all
     ? children
-    : children.filter((e) => ["file_created", "file_modified", "file_deleted", "test_result", "error_detected", "git_commit", "branch_changed"].includes(e.eventType)
+    : children.filter((e) => ["file_created", "file_modified", "file_deleted", "test_result", "error_detected", "git_commit", "branch_changed", "agent_note"].includes(e.eventType)
         || (e.eventType === "command_executed" && (e.payload as any).status !== "ok"));
   for (const e of notable)
     console.log(`    ${ICON[e.eventType] ?? "?"} [${e.id}] ${e.summary}${e.captureConfidence !== "observed" ? `  (${e.captureConfidence})` : ""}`);
@@ -154,6 +157,43 @@ async function main() {
         if (!args[1]) throw new Error("Give a pattern, e.g. dena exclude myproj generated/");
         const s = store.updateProjectSettings(p.id, { exclude: [...new Set([...store.projectSettings(p.id).exclude, args[1]])] });
         console.log(`Excluded: ${s.exclude.join(", ")}`);
+        break;
+      }
+      case "hooks": {
+        const action = args[0];
+        const p = project(store, args[1]);
+        const scope = (flag("scope") ?? "project") as hookInstall.Scope;
+        if (action === "status") {
+          for (const s of ["project", "user"] as const)
+            console.log(`${s.padEnd(8)} ${hookInstall.installedIn(s, p.rootPath) ? "installed" : "not installed"}  ${hookInstall.settingsFile(s, p.rootPath)}`);
+          break;
+        }
+        if (action !== "install" && action !== "uninstall") throw new Error("Use: dena hooks status|install|uninstall <project>");
+        const plan = action === "install" ? hookInstall.planInstall(scope, store.home, p.rootPath) : hookInstall.planUninstall(scope, p.rootPath);
+        if (!plan.changed) {
+          console.log(`Nothing to change in ${plan.file}.`);
+          break;
+        }
+        const others = Object.keys(plan.before ?? {}).filter((k) => k !== "hooks" && k !== "permissions");
+        console.log(`${action === "install" ? "Will add to" : "Will remove from"} ${plan.file}:
+  hooks:  SessionStart, UserPromptSubmit, PostToolUse, PostToolUseFailure, SubagentStop, SessionEnd
+          → ${hookInstall.hookCommand(store.home)}
+  allow:  ${hookInstall.noteAllowRule()}   (lets the agent leave notes without a permission prompt)
+  other settings and hooks are kept as they are${others.length ? ` (${others.join(", ")})` : ""}
+${scope === "user" ? "  scope: every Claude Code session on this computer; it captures nothing unless a Dena project is recording\n" : "  scope: sessions launched in this folder only (sessions started elsewhere are still read from transcripts)\n"}
+What the hook stores: ids, file paths, exit codes and timings for this computer's local spool — never prompt text or command output.`);
+        if (!args.includes("--yes")) {
+          console.log(`\nNothing written. Re-run with --yes to apply.`);
+          break;
+        }
+        const backup = hookInstall.applyPlan(plan);
+        console.log(`\nDone.${backup ? ` Backup of the previous file: ${backup}` : ""} New Claude Code sessions pick this up.`);
+        break;
+      }
+      case "ingest-hooks": {
+        const p = project(store, args[0]);
+        const r = await hooks.ingestHooks(store, p.id, p.rootPath);
+        console.log(JSON.stringify(r));
         break;
       }
       case "gaps": {

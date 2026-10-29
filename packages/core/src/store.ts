@@ -59,7 +59,7 @@ export class Store {
   readonly db: Database.Database;
   readonly blobs: BlobStore;
 
-  constructor(home: string) {
+  constructor(readonly home: string) {
     fs.mkdirSync(home, { recursive: true });
     this.db = new Database(path.join(home, "dena.db"));
     this.db.pragma("journal_mode = WAL");
@@ -80,6 +80,7 @@ export class Store {
     this.db
       .prepare("INSERT INTO project (id, name, root_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
       .run(id, name, root, now, now);
+    this.publishRecordingState();
     return { id, name, rootPath: root, createdAt: now, recordingState: "stopped" };
   }
 
@@ -99,6 +100,19 @@ export class Store {
     this.db
       .prepare("UPDATE project SET recording_state = ?, updated_at = ? WHERE id = ?")
       .run(state, new Date().toISOString(), projectId);
+    this.publishRecordingState();
+  }
+
+  /**
+   * Mirrors recording state into <home>/recording.json for the Claude Code hook, which must
+   * decide in milliseconds, without loading SQLite, whether to capture anything at all.
+   */
+  publishRecordingState(): void {
+    const projects = this.listProjects().map((p) => ({ id: p.id, root: p.rootPath, state: p.recordingState }));
+    const file = path.join(this.home, "recording.json");
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ projects }, null, 2));
+    fs.renameSync(tmp, file);
   }
 
   /** Deletes a project and every event, artifact row and gap that belongs to it. */
@@ -108,6 +122,7 @@ export class Store {
       this.db.prepare("DELETE FROM project WHERE id = ?").run(projectId);
       this.db.prepare("UPDATE maintenance SET allow_delete = 0 WHERE id = 1").run();
     })();
+    this.publishRecordingState();
     // Blobs are content-addressed and may be shared across projects; orphan GC is a later task.
   }
 
@@ -201,7 +216,7 @@ export class Store {
       }
       for (const l of batch.links) {
         const from = idOf(l.source, l.fromSourceEventId);
-        const to = idOf(l.source, l.toSourceEventId);
+        const to = idOf(l.toSource ?? l.source, l.toSourceEventId);
         if (!from || !to) continue;
         if (insertLink.run(from, to, l.linkType, l.strength, l.basis).changes) result.linksInserted++;
       }
@@ -210,6 +225,12 @@ export class Store {
           result.gapsRecorded++;
       }
       this.db.prepare("UPDATE project SET updated_at = ? WHERE id = ?").run(now, projectId);
+      // A tool call imported mid-run has no result yet; once the result arrives, that gap was never real.
+      this.db
+        .prepare(`DELETE FROM capture_gap WHERE project_id = ? AND reason LIKE 'No result recorded for % call tool:%'
+                  AND EXISTS (SELECT 1 FROM event e WHERE e.project_id = capture_gap.project_id
+                              AND e.source_event_id = 'result:' || substr(capture_gap.reason, instr(capture_gap.reason, 'call tool:') + 10))`)
+        .run(projectId);
     })();
     return result;
   }
@@ -323,6 +344,14 @@ export class Store {
     return (this.db.prepare("SELECT * FROM capture_gap WHERE project_id = ? ORDER BY from_time").all(projectId) as any[]).map(
       (r) => ({ id: r.id, sessionId: r.session_id, source: r.source, fromTime: r.from_time, toTime: r.to_time, reason: r.reason }),
     );
+  }
+
+  hasEvent(projectId: string, source: string, sourceEventId: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM event WHERE project_id = ? AND source = ? AND source_event_id = ?").get(projectId, source, sourceEventId);
+  }
+
+  hasSessionEvents(projectId: string, sessionId: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM event WHERE project_id = ? AND session_id = ? LIMIT 1").get(projectId, sessionId);
   }
 
   stats(projectId: string) {

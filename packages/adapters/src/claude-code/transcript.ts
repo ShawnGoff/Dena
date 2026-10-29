@@ -96,13 +96,21 @@ export function transcriptDirFor(root: string, claudeHome = path.join(os.homedir
 }
 
 export function listTranscripts(root: string, claudeHome?: string): string[] {
-  const dir = transcriptDirFor(root, claudeHome);
+  return transcriptsIn(transcriptDirFor(root, claudeHome));
+}
+
+/** Session transcripts in one project folder, plus subagent transcripts in <session>/subagents/. */
+export function transcriptsIn(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith(".jsonl"))
-    .map((f) => path.join(dir, f))
-    .sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs);
+  const out: string[] = [];
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.isFile() && e.name.endsWith(".jsonl")) out.push(path.join(dir, e.name));
+    else if (e.isDirectory()) {
+      const sub = path.join(dir, e.name, "subagents");
+      if (fs.existsSync(sub)) for (const f of fs.readdirSync(sub)) if (f.endsWith(".jsonl")) out.push(path.join(sub, f));
+    }
+  }
+  return out.sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs);
 }
 
 export interface ImportReport {
@@ -119,6 +127,24 @@ export interface ImportReport {
   /** Prompt groups whose activity pointed at a different project and were left out. */
   excludedGroups: number;
   excludedEvents: number;
+}
+
+const NOTE_KINDS = ["decision", "cause", "assumption", "todo", "note"] as const;
+
+/**
+ * Recognises the agent-notes command that Dena's SessionStart hook teaches the agent:
+ *   node …/dena-hook.mjs note <kind> <<'NOTE'\n<text>\nNOTE
+ * (a quoted single-line form is accepted too). Returns null for anything else.
+ */
+export function parseAgentNote(command: string): { kind: (typeof NOTE_KINDS)[number]; text: string } | null {
+  const m = command.match(/dena-hook\.mjs["']?\s+note(?:\s+([a-z]+))?\s*([\s\S]*)$/);
+  if (!m) return null;
+  const kind = (NOTE_KINDS as readonly string[]).includes(m[1] ?? "") ? (m[1] as (typeof NOTE_KINDS)[number]) : "note";
+  const rest = m[2] ?? "";
+  const heredoc = rest.match(/^<<-?\s*(['"]?)(\w+)\1\s*\n([\s\S]*?)\n\s*\2\s*$/);
+  const quoted = rest.match(/^(["'])([\s\S]*)\1\s*$/);
+  const text = (heredoc?.[3] ?? quoted?.[2] ?? "").trim();
+  return text ? { kind, text } : null;
 }
 
 /** `cd` targets in a shell command, with ~ expanded. */
@@ -352,7 +378,7 @@ export async function importTranscript(
         // A sidechain "user" message is the main agent instructing a subagent, not the human.
         push({ ...common, sourceEventId: sid, eventType: "prompt_submitted", actor: sidechain ? "ai_agent" : "user",
           summary: firstLine(t.text) || (images ? "(image prompt)" : "(empty prompt)"),
-          payload: { text: t.text, truncated: t.truncated, imagesAttached: images, sidechain, cwd: o.cwd, gitBranch: o.gitBranch },
+          payload: { text: t.text, truncated: t.truncated, imagesAttached: images, sidechain, cwd: o.cwd, gitBranch: o.gitBranch, promptId: o.promptId },
           captureConfidence: t.truncated ? "partial" : "observed" }, null);
         promptOf.set(sid, sid);
         continue;
@@ -467,6 +493,16 @@ export async function importTranscript(
           payload: { tool: b.name, input: slim, model, sidechain, ...(withheld ? { contentWithheld: true } : {}) },
           captureConfidence: "observed" }, inherited);
         pending.set(b.id, { sid, name: b.name, input, occurredAt: ts, sessionId, promptSid: inherited });
+        const note = b.name === "Bash" ? parseAgentNote(String(input.command ?? "")) : null;
+        if (note) {
+          push({ ...common, sourceEventId: `note:${b.id}`, eventType: "agent_note", actor: "ai_agent",
+            summary: `${note.kind[0]!.toUpperCase()}${note.kind.slice(1)} (agent's note): ${firstLine(note.text, 100)}`,
+            payload: { kind: note.kind, text: note.text, claimStatus: "agent_stated",
+              claimNote: "the agent's own account of its reasoning; not independently verified", model, sidechain },
+            captureConfidence: "observed" }, inherited);
+          batch.links.push({ source: SOURCE, fromSourceEventId: `note:${b.id}`, toSourceEventId: sid, linkType: "result_of",
+            strength: "observed", basis: "note recorded by this tool call" });
+        }
       }
     });
     if (o.uuid) promptOf.set(o.uuid, inherited);

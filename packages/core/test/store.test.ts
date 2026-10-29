@@ -63,6 +63,15 @@ describe("Store", () => {
     expect(store.gaps(p.id).filter((g) => g.reason === "reflog limit")).toHaveLength(1);
   });
 
+  it("clears a 'no result' gap once the result arrives", () => {
+    const p = store.createProject("demo", "/tmp/demo");
+    const gap = { sessionId: "s1", source: "test", fromTime: null, toTime: null, reason: "No result recorded for Bash call tool:x1" };
+    store.ingest(p.id, batch({ events: [ev("tool:x1")], artifacts: [], links: [], gaps: [gap] }));
+    expect(store.gaps(p.id).some((g) => g.reason === gap.reason)).toBe(true);
+    store.ingest(p.id, batch({ events: [ev("result:x1", { eventType: "command_executed" })], artifacts: [], links: [], gaps: [] }));
+    expect(store.gaps(p.id).some((g) => g.reason === gap.reason)).toBe(false);
+  });
+
   it("survives a restart", () => {
     const p = store.createProject("demo", "/tmp/demo");
     store.ingest(p.id, batch());

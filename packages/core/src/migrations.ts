@@ -163,6 +163,49 @@ DELETE FROM capture_gap WHERE id NOT IN (
 CREATE UNIQUE INDEX capture_gap_unique ON capture_gap(project_id, source, COALESCE(session_id, ''), reason);
 `,
   },
+  {
+    version: 4,
+    name: "episodes_and_explanations",
+    sql: `
+-- L1: episodes (work units). Derived deterministically from events and rebuilt freely,
+-- so they live apart from the immutable event table.
+CREATE TABLE work_unit (
+  id          TEXT NOT NULL,
+  project_id  TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  position    INTEGER NOT NULL,
+  title       TEXT NOT NULL,
+  started_at  TEXT NOT NULL,
+  ended_at    TEXT NOT NULL,
+  stats_json  TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (project_id, id)
+);
+CREATE TABLE work_unit_event (
+  project_id TEXT NOT NULL,
+  unit_id    TEXT NOT NULL,
+  event_id   INTEGER NOT NULL REFERENCES event(id) ON DELETE CASCADE,
+  PRIMARY KEY (project_id, unit_id, event_id),
+  FOREIGN KEY (project_id, unit_id) REFERENCES work_unit(project_id, id) ON DELETE CASCADE
+);
+CREATE INDEX work_unit_event_event ON work_unit_event(event_id);
+
+-- Generated explanations, cached by the exact evidence they were built from. A new packet
+-- hash means new evidence; old rows are kept as history.
+CREATE TABLE explanation (
+  id              INTEGER PRIMARY KEY,
+  project_id      TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  unit_id         TEXT NOT NULL,
+  packet_hash     TEXT NOT NULL,
+  prompt_version  INTEGER NOT NULL,
+  model           TEXT,
+  content_json    TEXT NOT NULL,
+  validation_json TEXT NOT NULL,
+  evidence_json   TEXT NOT NULL, -- E-ref -> event id map, so citations stay inspectable
+  cost_usd        REAL,
+  created_at      TEXT NOT NULL,
+  UNIQUE (project_id, unit_id, packet_hash, prompt_version)
+);
+`,
+  },
 ];
 
 export function migrate(db: Database.Database): number {

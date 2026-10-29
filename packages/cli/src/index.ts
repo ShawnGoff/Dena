@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { correlate, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
+import { buildPacket, ClaudeCodeProvider, explainEpisode, loadEpisodes, rebuildEpisodes, renderPacket, renderStep } from "@dena/engine";
+import fs from "node:fs";
 
 const HOME = process.env.DENA_HOME ?? path.join(os.homedir(), ".dena");
 const [cmd, ...args] = process.argv.slice(2);
@@ -28,6 +30,11 @@ const USAGE = `dena <command>
   hooks status|install|uninstall <project> [--scope project|user] [--yes]
                                  live Claude Code capture; shows the change first, writes only with --yes
   ingest-hooks <project>         process hook calls collected while not recording
+  episodes <project>             group activity into episodes (rebuilt from events)
+  packet <project> <episode>     show exactly what evidence would be sent to the model
+  explain <project> <episode> [--force] [--model M] [--out FILE]
+                                 explain one episode with your Claude Code model (cached)
+                                 <episode> is a number from "episodes", an ep_ id, or "last"
   timeline <project> [--session S] [--all]
                                  activity grouped by prompt
   show <project> <eventId>       one event with its links and artifacts
@@ -194,6 +201,44 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         const p = project(store, args[0]);
         const r = await hooks.ingestHooks(store, p.id, p.rootPath);
         console.log(JSON.stringify(r));
+        break;
+      }
+      case "episodes": {
+        const p = project(store, args[0]);
+        const eps = rebuildEpisodes(store, p.id);
+        for (const e of eps) {
+          const s = e.stats;
+          const bits = [s.prompts && `${s.prompts} prompts`, s.fileChanges && `${s.fileChanges} file changes`, s.commits && `${s.commits} commits`,
+            s.tests && `${s.tests} test runs${s.testFailures ? ` (${s.testFailures} failed)` : ""}`, s.notes && `${s.notes} notes`].filter(Boolean).join(", ");
+          console.log(`${String(e.position).padStart(3)}  ${e.id}  ${e.startedAt.slice(0, 16).replace("T", " ")}  ${e.title.slice(0, 70)}\n${" ".repeat(19)}${bits || "no changes"}`);
+        }
+        break;
+      }
+      case "packet":
+      case "explain": {
+        const p = project(store, args[0]);
+        let eps = loadEpisodes(store, p.id);
+        if (!eps.length) {
+          rebuildEpisodes(store, p.id);
+          eps = loadEpisodes(store, p.id);
+        }
+        const ref = args[1] ?? "last";
+        const ep = ref === "last" ? eps[eps.length - 1] : eps.find((e) => e.id === ref || String(e.position) === ref);
+        if (!ep) throw new Error(`No episode "${ref}". Run: dena episodes ${p.name}`);
+        if (cmd === "packet") {
+          const pk = buildPacket(store, p.id, ep.id);
+          console.log(`${pk.items.length} items, ${pk.chars} characters${pk.truncated ? ", some truncated" : ""}. This text, after redaction, is what the model sees:\n`);
+          console.log(renderPacket(pk));
+          break;
+        }
+        const provider = new ClaudeCodeProvider(undefined, { model: flag("model") });
+        const x = await explainEpisode(store, p.id, ep.id, provider, { force: args.includes("--force"), log: (m) => console.error(`· ${m}`) });
+        const md = renderStep(x);
+        if (flag("out")) {
+          fs.writeFileSync(flag("out")!, md);
+          console.error(`· wrote ${flag("out")}`);
+        } else console.log(md);
+        console.error(`· ${x.cached ? "cached" : `generated in ${x.attempts} attempt${x.attempts > 1 ? "s" : ""}`}; ${x.validation.ok ? "passed checks" : `${x.validation.issues.filter((i) => i.severity === "error").length} problems remain (shown in the step)`}`);
         break;
       }
       case "gaps": {

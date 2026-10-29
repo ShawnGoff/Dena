@@ -5,6 +5,7 @@ import { correlate, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
 import { buildPacket, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
+import { startServer } from "@dena/server";
 
 const HOME = process.env.DENA_HOME ?? path.join(os.homedir(), ".dena");
 const [cmd, ...args] = process.argv.slice(2);
@@ -37,6 +38,7 @@ const USAGE = `dena <command>
                                  <episode> is a number from "episodes", an ep_ id, or "last"
   guide build <project> [--from N] [--to N] [--model M] [--depth D] [--max-usd X] [--yes]
                                  explain many episodes in as few calls as possible; shows an estimate first
+  serve [--port N]               open Dena's interface in your browser (local only; the printed link carries a one-time key)
   config <project> [key value]   show or set: model (e.g. haiku, sonnet; "default" = your Claude Code default),
                                  depth (concise|thorough), max-usd (per batch run; "none" to clear)
   timeline <project> [--session S] [--all]
@@ -277,6 +279,16 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         const repairs = r.explained.filter((x) => !x.cached && x.attempts > 1).length;
         console.log(`\nDone: ${r.explained.length} episodes, ${r.calls} model calls, $${r.spentUsd.toFixed(2)} reported, ${repairs} needed a repair`
           + `${r.skippedForBudget.length ? `, ${r.skippedForBudget.length} skipped to stay under the cap` : ""}.`);
+        break;
+      }
+      case "serve": {
+        const srv = await startServer(store, { port: flag("port") ? Number(flag("port")) : 4600, log: (m) => console.log(`${new Date().toTimeString().slice(0, 8)}  ${m}`) });
+        console.log(`Dena is running at:\n\n  ${srv.url}\n\nOnly this computer can reach it, and only with the key in that link. Ctrl-C to stop (stops any recording started here).`);
+        await new Promise<void>((resolve) => {
+          process.once("SIGINT", resolve);
+          process.once("SIGTERM", resolve);
+        });
+        await srv.close();
         break;
       }
       case "config": {

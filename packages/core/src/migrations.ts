@@ -240,6 +240,17 @@ ALTER TABLE explanation_new RENAME TO explanation;
 CREATE INDEX explanation_unit ON explanation(project_id, unit_id, created_at);
 `,
   },
+  {
+    version: 6,
+    name: "search_index",
+    // Full-text index over event summaries and their main text. Derived and rebuildable; filled
+    // incrementally from a per-project cursor so ingest stays fast.
+    sql: `
+CREATE VIRTUAL TABLE event_fts USING fts5(
+  summary, body, project_id UNINDEXED, event_id UNINDEXED, tokenize = 'porter unicode61'
+);
+`,
+  },
 ];
 
 export function migrate(db: Database.Database): number {

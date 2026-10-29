@@ -125,6 +125,7 @@ export class Store {
   deleteProject(projectId: string): void {
     this.db.transaction(() => {
       this.db.prepare("UPDATE maintenance SET allow_delete = 1 WHERE id = 1").run();
+      this.db.prepare("DELETE FROM event_fts WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM project WHERE id = ?").run(projectId);
       this.db.prepare("UPDATE maintenance SET allow_delete = 0 WHERE id = 1").run();
     })();
@@ -350,6 +351,47 @@ export class Store {
     return (this.db.prepare("SELECT * FROM capture_gap WHERE project_id = ? ORDER BY from_time").all(projectId) as any[]).map(
       (r) => ({ id: r.id, sessionId: r.session_id, source: r.source, fromTime: r.from_time, toTime: r.to_time, reason: r.reason }),
     );
+  }
+
+  /** Adds events stored since the last call to the search index. Cheap when nothing is new. */
+  indexForSearch(projectId: string): number {
+    const last = Number(this.getCursor(projectId, "search", "last_event_id") ?? 0);
+    const rows = this.db
+      .prepare("SELECT id, summary, payload_json FROM event WHERE project_id = ? AND id > ? ORDER BY id")
+      .all(projectId, last) as { id: number; summary: string; payload_json: string }[];
+    if (!rows.length) return 0;
+    const ins = this.db.prepare("INSERT INTO event_fts (summary, body, project_id, event_id) VALUES (?, ?, ?, ?)");
+    this.db.transaction(() => {
+      for (const r of rows) {
+        const p = JSON.parse(r.payload_json);
+        const body = [p.text, p.input?.command, p.command, p.message, p.file, p.input?.file_path, p.stdout, p.output]
+          .filter((x) => typeof x === "string").join("\n").slice(0, 8_000);
+        ins.run(r.summary, body, projectId, r.id);
+      }
+    })();
+    this.setCursor(projectId, "search", "last_event_id", String(rows[rows.length - 1]!.id));
+    return rows.length;
+  }
+
+  search(projectId: string, query: string, limit = 50): { event: StoredEvent; snippet: string }[] {
+    this.indexForSearch(projectId);
+    // Treat the user's words as plain terms (quoted), so punctuation cannot become FTS syntax.
+    const terms = query.match(/[\p{L}\p{N}_.-]+/gu)?.map((t) => `"${t.replace(/"/g, "")}"`) ?? [];
+    if (!terms.length) return [];
+    const hits = this.db
+      .prepare(`SELECT event_id, snippet(event_fts, 1, '[', ']', '…', 12) AS snip FROM event_fts
+                WHERE event_fts MATCH ? AND project_id = ? ORDER BY rank LIMIT ?`)
+      .all(terms.join(" "), projectId, limit) as { event_id: number; snip: string }[];
+    const byId = new Map(this.eventsById(projectId, hits.map((h) => h.event_id)).map((e) => [e.id, e]));
+    return hits.flatMap((h) => (byId.has(h.event_id) ? [{ event: byId.get(h.event_id)!, snippet: h.snip }] : []));
+  }
+
+  eventsById(projectId: string, ids: number[]): StoredEvent[] {
+    if (!ids.length) return [];
+    const rows = this.db
+      .prepare(`SELECT * FROM event WHERE project_id = ? AND id IN (${ids.map(() => "?").join(",")})`)
+      .all(projectId, ...ids) as any[];
+    return rows.map(rowToEvent);
   }
 
   hasEvent(projectId: string, source: string, sourceEventId: string): boolean {

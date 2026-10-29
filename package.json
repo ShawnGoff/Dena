@@ -3,12 +3,14 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dena": "tsx packages/cli/src/index.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json",
+    "dena": "tsx packages/cli/src/index.ts",
+    "build:web": "npm run build -w @dena/web"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

@@ -6,6 +6,7 @@
   "dependencies": {
     "@dena/adapters": "0.0.1",
     "@dena/core": "0.0.1",
-    "@dena/engine": "0.0.1"
+    "@dena/engine": "0.0.1",
+    "@dena/server": "0.0.1"
   }
 }

@@ -1,0 +1,14 @@
+{
+  "name": "@dena/server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts"
+  },
+  "dependencies": {
+    "@dena/adapters": "0.0.1",
+    "@dena/core": "0.0.1",
+    "@dena/engine": "0.0.1"
+  }
+}

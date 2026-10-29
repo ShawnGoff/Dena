@@ -393,6 +393,63 @@ ALTER TABLE wiki_section ADD COLUMN output_tokens INTEGER;
 ALTER TABLE wiki_section ADD COLUMN cache_read_tokens INTEGER;
 `,
   },
+  {
+    version: 13,
+    name: "code_explainers",
+    sql: `
+-- One explanation per code symbol (function, class, method, type…), keyed by the hash of its
+-- text, so an unchanged function keeps its explanation and only changed ones are re-explained.
+CREATE TABLE code_symbol_doc (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id      TEXT NOT NULL REFERENCES project(id),
+  file            TEXT NOT NULL,
+  symbol_key      TEXT NOT NULL,
+  symbol_hash     TEXT NOT NULL,
+  prompt_version  INTEGER NOT NULL,
+  content_json    TEXT NOT NULL,
+  model           TEXT,
+  requested_model TEXT NOT NULL DEFAULT '',
+  created_at      TEXT NOT NULL,
+  UNIQUE (project_id, file, symbol_key, symbol_hash, prompt_version)
+);
+CREATE INDEX code_symbol_doc_file ON code_symbol_doc (project_id, file, symbol_key, id);
+CREATE INDEX code_symbol_doc_hash ON code_symbol_doc (project_id, symbol_hash);
+
+-- The file-level page (purpose, how it fits, what you can learn), keyed by the file's outline.
+CREATE TABLE code_file_doc (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id      TEXT NOT NULL REFERENCES project(id),
+  file            TEXT NOT NULL,
+  outline_hash    TEXT NOT NULL,
+  prompt_version  INTEGER NOT NULL,
+  content_json    TEXT NOT NULL,
+  model           TEXT,
+  requested_model TEXT NOT NULL DEFAULT '',
+  created_at      TEXT NOT NULL,
+  UNIQUE (project_id, file, outline_hash, prompt_version)
+);
+CREATE INDEX code_file_doc_file ON code_file_doc (project_id, file, id);
+
+-- Every model call made for code explainers, for usage tracking and token calibration.
+CREATE TABLE code_call (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id        TEXT NOT NULL REFERENCES project(id),
+  file              TEXT NOT NULL,
+  symbols           INTEGER NOT NULL,
+  with_file_page    INTEGER NOT NULL,
+  attempts          INTEGER NOT NULL,
+  model             TEXT,
+  requested_model   TEXT NOT NULL DEFAULT '',
+  input_chars       INTEGER NOT NULL,
+  prompt_tokens     INTEGER,
+  output_tokens     INTEGER,
+  cache_read_tokens INTEGER,
+  cost_usd          REAL,
+  created_at        TEXT NOT NULL
+);
+CREATE INDEX code_call_file ON code_call (project_id, file);
+`,
+  },
 ];
 
 export function migrate(db: Database.Database): number {

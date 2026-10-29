@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { correlate, displaySummary, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
-import { buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, formatTokens, exportGuideMarkdown, buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
+import { codeOverview, codePage, explainFile, formatTokenRange, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, formatTokens, exportGuideMarkdown, buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
 import { startServer } from "@dena/server";
 
@@ -41,6 +41,9 @@ const USAGE = `dena <command>
   memory <project> [--rebuild]   project memory: components, problems and fixes, decisions, concepts, unknowns
   wiki <project> [section] [--model M] [--force] [--out FILE]
                                  list the wiki pages, or write one (overview, architecture, component:<folder>)
+  code <project> [file] [--explain] [--force] [--model M] [--out FILE]
+                                 list source files and how much is explained, or show one file's page;
+                                 --explain explains its new and changed functions (unchanged ones are kept)
   log <project> [--session ID|last] [--all] [--out FILE]
                                  what the AI did, session by session, in plain language (no model used);
                                  --all includes its replies and bookkeeping
@@ -326,6 +329,32 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         if (flag("out")) fs.writeFileSync(flag("out")!, md);
         else console.log(md);
         console.error(`· ${s.cached ? "cached" : `written in ${s.attempts} call${s.attempts > 1 ? "s" : ""}`}; ${s.validation.ok ? "passed checks" : "problems remain (shown on the page)"}`);
+        break;
+      }
+      case "code": {
+        const p = project(store, args[0]);
+        const file = args[1] && !args[1].startsWith("--") ? args[1] : null;
+        if (!file) {
+          const files = codeOverview(store, p.id);
+          for (const f of files) {
+            const state = f.fileDoc === "none" && !f.current ? "not explained" : `${f.current}/${f.symbols} explained${f.changed ? `, ${f.changed} changed since` : ""}${f.new ? `, ${f.new} new` : ""}`;
+            console.log(`${f.path.padEnd(56)} ${state}`);
+          }
+          console.log(`\n${files.length} files. Show one: dena code ${p.name} <file> [--explain]`);
+          break;
+        }
+        if (args.includes("--explain")) {
+          const before = codePage(store, p.id, file, flag("model"));
+          if (before.pending.estimate) console.error(`· ${before.pending.symbols} symbols to explain${before.pending.fileDoc ? " plus the file page" : ""}: ${formatTokenRange(before.pending.estimate)}`);
+          const r = await explainFile(store, p.id, file, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account", effort: flag("effort") ?? store.projectSettings(p.id).effort }),
+            { model: flag("model"), force: args.includes("--force"), log: (m) => console.error(`· ${m}`) });
+          console.error(`· explained ${r.explained}${r.reused ? `, reused ${r.reused}` : ""} in ${r.calls} call${r.calls === 1 ? "" : "s"}${r.tokens ? ` (${formatTokens(r.tokens.prompt)} sent, ${formatTokens(r.tokens.output)} written)` : ""}`);
+        }
+        const md = renderCodeMarkdown(codePage(store, p.id, file));
+        if (flag("out")) {
+          fs.writeFileSync(flag("out")!, md);
+          console.log(`Wrote ${flag("out")}`);
+        } else console.log(md);
         break;
       }
       case "log": {

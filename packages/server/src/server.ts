@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, lastHeartbeat, liveRecorder, Recorder, type RecorderOptions } from "@dena/adapters";
-import { buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
+import { codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
   estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
@@ -277,6 +277,47 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         throw new HttpError(502, /^(Claude Code|Claude is|Your Anthropic|No valid API key|There is no captured)/.test(msg) ? msg : "The model call failed. Check Claude Code's sign-in, then try again.");
       } finally {
         inFlight.delete(flight);
+      }
+    }
+
+    if (sub[0] === "code") {
+      const settings = store.projectSettings(p.id);
+      if (sub.length === 1 && method === "GET") return { files: codeOverview(store, p.id), settings: { model: settings.model ?? null } };
+      const file = String((method === "GET" ? url.searchParams.get("path") : body?.path) ?? "");
+      const flight = `${p.id}:code:${file}`;
+      const page = () => {
+        try {
+          return codePage(store, p.id, file);
+        } catch (e) {
+          throw new HttpError(404, (e as Error).message);
+        }
+      };
+      if (sub[1] === "file" && method === "GET") return { ...page(), settings: { model: settings.model ?? null }, busy: inFlight.has(flight) };
+      if (sub[1] === "export" && method === "GET") return { filename: `${file.replace(/[^\w.-]+/g, "_")}.md`, markdown: renderCodeMarkdown(page()) };
+      if (sub[1] === "stop" && method === "POST") {
+        const c = inFlight.get(flight);
+        c?.abort();
+        return { stopping: !!c };
+      }
+      if (sub[1] === "explain" && method === "POST") {
+        page(); // 404 for anything Dena does not explain
+        const model = body?.model ?? undefined;
+        if (model !== undefined && (typeof model !== "string" || !MODEL_NAME.test(model))) throw new HttpError(400, "Invalid model name");
+        const only = Array.isArray(body?.only) ? (body.only as unknown[]).filter((x): x is string => typeof x === "string") : undefined;
+        if (inFlight.has(flight)) throw new HttpError(409, "This file is already being explained");
+        const controller = new AbortController();
+        inFlight.set(flight, controller);
+        try {
+          const r = await explainFile(store, p.id, file, getProvider(p.id), { model, force: body?.force === true, only, signal: controller.signal, log: (m) => log(`[${p.name}] code ${m}`) });
+          return r;
+        } catch (e) {
+          if (stopped(e)) throw new HttpError(409, (e as Error).message);
+          const msg = (e as Error).message;
+          log(`[${p.name}] code ${file} failed: ${msg}`);
+          throw new HttpError(502, /^(Claude Code|Claude is|Your Anthropic|No valid API key)/.test(msg) ? msg : "The model call failed. Check Claude Code's sign-in, then try again.");
+        } finally {
+          inFlight.delete(flight);
+        }
       }
     }
 

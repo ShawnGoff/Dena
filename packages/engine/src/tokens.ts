@@ -12,14 +12,14 @@ import type { Store } from "@dena/core";
 /** Before calibration. Overhead: a 30-character call reported ~780 tokens (Claude Code 2.1.309), plus the output schema. */
 export const DEFAULT_OVERHEAD_TOKENS = 2_000;
 export const DEFAULT_CHARS_PER_TOKEN = 3.3; // evidence is mostly code, diffs and paths, which tokenize denser than prose
-export const DEFAULT_OUTPUT_TOKENS = { thorough: 6_000, concise: 3_500, wiki: 6_500 } as const; // includes hidden reasoning, which models report as output
+export const DEFAULT_OUTPUT_TOKENS = { thorough: 6_000, concise: 3_500, wiki: 6_500, code: 4_000 } as const; // includes hidden reasoning, which models report as output
 export const DEFAULT_CALLS_PER_DOC = 1.5; // checks often ask for one repair
 const MIN_SAMPLES = 3;
 
 export interface Calibration {
   overheadTokens: number;
   charsPerToken: number;
-  outputTokens: { thorough: number; concise: number; wiki: number };
+  outputTokens: { thorough: number; concise: number; wiki: number; code: number };
   /** Average model calls per document (1 = never repaired, 2 = always repaired), learned from history. */
   callsPerDoc: number;
   samples: number;
@@ -27,7 +27,7 @@ export interface Calibration {
   basis: string;
 }
 
-interface Sample { chars: number; calls: number; prompt: number; output: number; kind: "thorough" | "concise" | "wiki" }
+interface Sample { chars: number; calls: number; prompt: number; output: number; kind: "thorough" | "concise" | "wiki" | "code" }
 
 function samples(store: Store, model: string): Sample[] {
   const match = "(requested_model = @m OR model = @m)";
@@ -38,9 +38,13 @@ function samples(store: Store, model: string): Sample[] {
   const wiki = store.db
     .prepare(`SELECT input_chars c, attempts a, prompt_tokens p, output_tokens o FROM wiki_section WHERE prompt_tokens > 0 AND input_chars > 0 AND ${match}`)
     .all({ m: model }) as { c: number; a: number; p: number; o: number }[];
+  const code = store.db
+    .prepare(`SELECT input_chars c, attempts a, prompt_tokens p, output_tokens o FROM code_call WHERE prompt_tokens > 0 AND input_chars > 0 AND ${match}`)
+    .all({ m: model }) as { c: number; a: number; p: number; o: number }[];
   return [
     ...steps.map((r) => ({ chars: r.c, calls: r.a, prompt: r.p, output: r.o, kind: (r.d === "concise" ? "concise" : "thorough") as Sample["kind"] })),
     ...wiki.map((r) => ({ chars: r.c, calls: r.a, prompt: r.p, output: r.o, kind: "wiki" as const })),
+    ...code.map((r) => ({ chars: r.c, calls: r.a, prompt: r.p, output: r.o, kind: "code" as const })),
   ];
 }
 
@@ -51,7 +55,7 @@ export function calibrate(store: Store, model: string): Calibration {
     const xs = s.filter((x) => x.kind === k);
     return xs.length ? Math.round(xs.reduce((n, x) => n + x.output / x.calls, 0) / xs.length) : DEFAULT_OUTPUT_TOKENS[k];
   };
-  const outputTokens = { thorough: avgOut("thorough"), concise: avgOut("concise"), wiki: avgOut("wiki") };
+  const outputTokens = { thorough: avgOut("thorough"), concise: avgOut("concise"), wiki: avgOut("wiki"), code: avgOut("code") };
   // Repairs re-send the evidence, so the repair rate matters as much as the size of one call.
   const callsPerDoc = s.length ? Math.round((s.reduce((n, x) => n + x.calls, 0) / s.length) * 100) / 100 : DEFAULT_CALLS_PER_DOC;
   if (s.length < MIN_SAMPLES)
@@ -90,13 +94,14 @@ export interface TokenEstimate {
 
 /**
  * Tokens for writing `docs` documents whose first calls send `chars` characters in total.
- * Expected repair calls are included at this user's own repair rate.
+ * Expected repair calls are included at this user's own repair rate. `outputPerCall` replaces the
+ * learned output size when the caller knows better (a call explaining one function writes little).
  */
-export function estimateTokens(store: Store, model: string, chars: number, docs: number, kind: "thorough" | "concise" | "wiki"): TokenEstimate {
+export function estimateTokens(store: Store, model: string, chars: number, docs: number, kind: Sample["kind"], outputPerCall?: number): TokenEstimate {
   const c = calibrate(store, model);
   const at = (perDoc: number) => ({
     prompt: docs * perDoc * c.overheadTokens + (chars / c.charsPerToken) * perDoc,
-    output: docs * perDoc * c.outputTokens[kind],
+    output: docs * perDoc * (outputPerCall ?? c.outputTokens[kind]),
   });
   const exp = at(c.callsPerDoc), lo = at(1), hi = at(2);
   return {

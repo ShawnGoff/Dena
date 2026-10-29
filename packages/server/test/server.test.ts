@@ -13,6 +13,11 @@ class FakeProvider implements Provider {
   models: (string | undefined)[] = [];
   async generate(_s: string, _u: string, _schema: object, o?: { model?: string }): Promise<GenerateResult> {
     this.models.push(o?.model);
+    const props = (_schema as any).properties;
+    if (props?.symbols) { // a code explainer call
+      const symbols = [..._u.matchAll(/<symbol key=("[^"]*")/g)].map((m) => ({ key: JSON.parse(m[1]!), summary: "Does a thing.", how: [], learn: [], watch: [] }));
+      return { json: { symbols, ...(props.file ? { file: { purpose: "A helper.", fitsIn: [], learn: [], readingOrder: [] } } : {}) }, model: "fake-default", costUsd: 0, durationMs: 1 };
+    }
     return { json: { title: "Added a quaternion helper", summary: "s", whatHappened: [{ text: "The user asked for it.", kind: "observed", evidence: ["E1"] }],
       whyItMattered: [], howItWorks: [], decisions: [], concepts: [], uncertainty: [] }, model: o?.model ?? "fake-default", costUsd: 0.002, durationMs: 1 };
   }
@@ -248,6 +253,33 @@ describe("activity API", () => {
       expect(Array.isArray(one.entries)).toBe(true);
       const ex = (await req(`/api/projects/${pid}/activity/export?id=${encodeURIComponent(list[0].id)}`)).json;
       expect(ex.markdown).toContain("what the AI did");
+    }
+  });
+});
+
+describe("code explainers API", () => {
+  it("lists files, explains one, and refuses paths outside the project", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dena-srv-code-"));
+    fs.mkdirSync(path.join(root, "src"));
+    fs.writeFileSync(path.join(root, "src/math.ts"), "export function add(a: number, b: number) {\n  return a + b;\n}\n");
+    const cp = store.createProject("code-demo", root).id;
+    try {
+      const list = (await req(`/api/projects/${cp}/code`)).json;
+      expect(list.files.map((f: any) => f.path)).toEqual(["src/math.ts"]);
+      const before = (await req(`/api/projects/${cp}/code/file?path=src/math.ts`)).json;
+      expect(before.symbols.map((s: any) => `${s.key}:${s.status}`)).toEqual(["add:new"]);
+      expect(before.pending.calls).toBe(1);
+      const r = await req(`/api/projects/${cp}/code/explain`, { method: "POST", body: { path: "src/math.ts" } });
+      expect(r.status).toBe(200);
+      expect(r.json.explained).toBe(1);
+      const after = (await req(`/api/projects/${cp}/code/file?path=src/math.ts`)).json;
+      expect(after.symbols[0].doc.summary).toBe("Does a thing.");
+      expect(after.fileDoc.current).toBe(true);
+      expect((await req(`/api/projects/${cp}/code/export?path=src/math.ts`)).json.markdown).toContain("# src/math.ts");
+      expect((await req(`/api/projects/${cp}/code/file?path=${encodeURIComponent("../../etc/passwd")}`)).status).toBe(404);
+      expect((await req(`/api/projects/${cp}/code/explain`, { method: "POST", body: { path: "/etc/passwd" } })).status).toBe(404);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

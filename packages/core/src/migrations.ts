@@ -251,6 +251,34 @@ CREATE VIRTUAL TABLE event_fts USING fts5(
 );
 `,
   },
+  {
+    version: 7,
+    name: "project_memory",
+    // L2 project memory: entities distilled from events and explanations. Fully derived and
+    // rebuilt in place, so it never needs migrating data, only this shape.
+    sql: `
+CREATE TABLE memory_entity (
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  id         TEXT NOT NULL,
+  kind       TEXT NOT NULL CHECK (kind IN ('component','problem','decision','concept','question')),
+  title      TEXT NOT NULL,
+  data_json  TEXT NOT NULL,
+  sort_key   REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_id, id)
+);
+CREATE INDEX memory_kind ON memory_entity(project_id, kind, sort_key DESC);
+-- What each entity rests on: episodes, events, and (for entities taken from explanations) the claim.
+CREATE TABLE memory_source (
+  project_id TEXT NOT NULL,
+  entity_id  TEXT NOT NULL,
+  unit_id    TEXT,
+  event_id   INTEGER,
+  basis      TEXT NOT NULL,
+  FOREIGN KEY (project_id, entity_id) REFERENCES memory_entity(project_id, id) ON DELETE CASCADE
+);
+CREATE INDEX memory_source_entity ON memory_source(project_id, entity_id);
+`,
+  },
 ];
 
 export function migrate(db: Database.Database): number {

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { correlate, Store, type IngestBatch, type NewEvent } from "@dena/core";
 import {
-  buildEpisodes, buildPacket, estimate, explainEpisode, explainMany, rebuildEpisodes, renderPacket, renderStep, validateStep,
+  buildEpisodes, buildPacket, componentOf, ensureMemory, estimate, failingTests, loadMemory, explainEpisode, explainMany, rebuildEpisodes, renderPacket, renderStep, validateStep,
   type GenerateResult, type Provider, type Step,
 } from "../src/index.ts";
 
@@ -289,5 +289,59 @@ describe("usage savings", () => {
     const capped = await explainMany(store, pid, eps.map((e) => e.id), new FakeProvider([answer]), { force: true, maxUsd: 0 });
     expect(capped.calls).toBe(0);
     expect(capped.skippedForBudget).toHaveLength(4);
+  });
+});
+
+describe("project memory", () => {
+  it("groups files into components", () => {
+    expect(componentOf("src/views/Guide.tsx")).toBe("src/views");
+    expect(componentOf("src/App.tsx")).toBe("src");
+    expect(componentOf("README.md")).toBe("(project root)");
+  });
+
+  it("reads failing test names from common runners", () => {
+    expect(failingTests("ok 1 - a\nnot ok 2 - parses quoted fields\n# fail 1")).toEqual(["parses quoted fields"]);
+    expect(failingTests(" FAIL  src/csv.test.ts > quotes\n Tests  1 failed")).toEqual(["src/csv.test.ts > quotes"]);
+    expect(failingTests("FAILED tests/test_csv.py::test_quotes - assert")).toEqual(["tests/test_csv.py::test_quotes"]);
+  });
+
+  it("records a failure and its later fix, with the cause note and honest basis", () => {
+    ensureMemory(store, pid);
+    const [p] = loadMemory(store, pid, "problem");
+    expect(p!.data).toMatchObject({ status: "fixed", failedRuns: 1, fixCounts: { passed: 3, failed: 0 } });
+    expect((p!.data.causeNotes as any[])[0].text).toContain("split(',')");
+    expect(String(p!.data.basis)).toContain("Inferred: that the changes in between fixed it");
+    expect(p!.sources.map((s) => s.basis)).toEqual(expect.arrayContaining(["failing test run", "first later passing run"]));
+  });
+
+  it("links the commit made right after a fix when nothing was captured in between", () => {
+    store.ingest(pid, { sessions: [], artifacts: [], links: [], gaps: [], events: [
+      ev(CC, "u9", "prompt_submitted", 400, { text: "fix it" }, { actor: "user", summary: "fix it" }),
+      ev(CC, "result:t9", "test_result", 401, { outcome: "failed", testsPassed: 0, testsFailed: 1, stdout: "not ok 1 - it works" }),
+      ev(CC, "result:t10", "test_result", 402, { outcome: "passed", testsPassed: 1, testsFailed: 0 }),
+      ev("git", "commit:fix", "git_commit", 403, { sha: "fff0000", message: "Fix it", files: [{ path: "src/it.ts", added: 1, removed: 1 }] }),
+    ] });
+    rebuildEpisodes(store, pid);
+    ensureMemory(store, pid);
+    const p = loadMemory(store, pid, "problem").find((m) => m.title === "Failing test: it works")!;
+    expect(p.data.commitAfterFix).toMatchObject({ sha: "fff0000", files: ["src/it.ts"] });
+    expect(String((p.data.commitAfterFix as any).basis)).toMatch(/^inferred/);
+  });
+
+  it("takes decisions, concepts and uncertainty from explanations, keeping claim kinds and evidence", async () => {
+    const step = goodStep();
+    step.uncertainty = ["The reason for the rename is not shown in E1."];
+    await explainEpisode(store, pid, rebuildEpisodes(store, pid)[0]!.id, new FakeProvider([step]));
+    ensureMemory(store, pid);
+    const decision = loadMemory(store, pid, "decision").find((d) => d.data.claimKind === "agent_stated" && String(d.data.text).includes("split"))!;
+    expect(decision.sources[0]!.eventId).toBeTypeOf("number");
+    expect(loadMemory(store, pid, "concept").map((c) => c.title)).toContain("RFC 4180");
+    const q = loadMemory(store, pid, "question").find((x) => String(x.data.text).includes("rename"))!;
+    expect(Object.keys(q.data.refs as object)).toEqual(["E1"]);
+  });
+
+  it("only rebuilds when something changed", () => {
+    expect(ensureMemory(store, pid)).toBe(true);
+    expect(ensureMemory(store, pid)).toBe(false);
   });
 });

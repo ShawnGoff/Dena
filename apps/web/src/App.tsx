@@ -5,8 +5,9 @@ import { Overview } from "./views/Overview";
 import { Search } from "./views/Search";
 import { Timeline } from "./views/Timeline";
 import { Guide } from "./views/Guide";
+import { Memory } from "./views/Memory";
 
-type View = "overview" | "timeline" | "guide" | "search";
+type View = "overview" | "timeline" | "guide" | "memory" | "search";
 
 /** URL query keeps the view shareable within this browser session: ?p=<project>&v=<view>&ep=<episode>&ev=<event>. */
 function readRoute() {
@@ -81,7 +82,7 @@ export function App() {
             </div>
             <Recording project={project} onChange={() => { loadProjects(); setRefresh((n) => n + 1); }} />
             <div className="tabs" role="tablist">
-              {(["overview", "timeline", "guide", "search"] as View[]).map((v) => (
+              {(["overview", "timeline", "guide", "memory", "search"] as View[]).map((v) => (
                 <button key={v} role="tab" aria-selected={route.v === v} className={`tab ${route.v === v ? "active" : ""}`} onClick={() => go({ v })}>
                   {v[0]!.toUpperCase() + v.slice(1)}
                 </button>
@@ -93,6 +94,7 @@ export function App() {
               {route.v === "overview" && <Overview projectId={project.id} refresh={refresh} onEvent={onEvent} onEpisode={(ep) => go({ v: "timeline", ep })} />}
               {route.v === "timeline" && <Timeline projectId={project.id} refresh={refresh} openEpisode={route.ep} selectedEvent={route.ev} onEvent={onEvent} />}
               {route.v === "guide" && <Guide projectId={project.id} openEpisode={route.ep} onEpisode={(ep) => go({ ep, ev: null })} onEvent={onEvent} />}
+              {route.v === "memory" && <Memory projectId={project.id} onEvent={onEvent} onEpisode={(ep) => go({ v: "guide", ep, ev: null })} />}
               {route.v === "search" && <Search projectId={project.id} selectedEvent={route.ev} onEvent={onEvent} />}
             </div>
             {route.ev != null && <EvidencePanel projectId={project.id} eventId={route.ev} onSelect={onEvent} onClose={() => go({ ev: null })}

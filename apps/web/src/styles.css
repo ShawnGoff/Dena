@@ -256,3 +256,22 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .settings-box label { display: grid; grid-template-columns: 48px 1fr; align-items: center; gap: 8px; font-size: 12.5px; }
 .settings-box select { background: var(--bg-sunken); color: var(--text); border: 1px solid var(--line-strong); border-radius: 7px; padding: 5px 8px; font: inherit; font-size: 12.5px; }
 .auth-warn { color: var(--warn); background: var(--warn-soft); border-radius: 6px; padding: 6px 8px; }
+
+/* Memory */
+.mem-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.mem-card { margin-bottom: 12px; padding: 14px 16px; }
+.mem-head { display: flex; align-items: baseline; gap: 10px; }
+.mem-title { flex: 1; min-width: 0; font-weight: 600; }
+.mem-when { font-size: 12px; white-space: nowrap; }
+.mem-body { display: grid; gap: 8px; margin-top: 10px; font-size: 13.5px; }
+.mem-note { font-size: 13.5px; line-height: 1.6; }
+.mem-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; font-size: 12px; margin-top: 4px; }
+.mem-stats { display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0; font-size: 13px; color: var(--text-dim); }
+.mem-stats b { color: var(--text); }
+.mem-stats .ok { color: var(--ok); } .mem-stats .bad { color: var(--bad); }
+.mem-line { padding: 10px 0; border-top: 1px solid var(--line); line-height: 1.65; }
+.mem-line:first-of-type { border-top: 0; }
+.small { font-size: 12.5px; }
+.chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.chip { font: 500 11px var(--mono); border: 1px solid var(--line-strong); background: var(--bg-raised); color: var(--text-dim); border-radius: 999px; padding: 1px 7px; cursor: pointer; }
+.chip:hover { color: var(--accent); border-color: var(--accent); }

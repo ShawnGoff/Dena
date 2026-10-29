@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { correlate, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
-import { buildPacket, claudeAuthStatus, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
+import { buildPacket, claudeAuthStatus, ensureMemory, loadMemory, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
 import { startServer } from "@dena/server";
 
@@ -38,6 +38,7 @@ const USAGE = `dena <command>
                                  <episode> is a number from "episodes", an ep_ id, or "last"
   guide build <project> [--from N] [--to N] [--model M] [--depth D] [--max-usd X] [--yes]
                                  explain many episodes in as few calls as possible; shows an estimate first
+  memory <project> [--rebuild]   project memory: components, problems and fixes, decisions, concepts, unknowns
   serve [--port N]               open Dena's interface in your browser (local only; the printed link carries a one-time key)
   config <project> [key value]   show or set: model (e.g. haiku, sonnet; "default" = your Claude Code default),
                                  depth (concise|thorough), max-usd (per batch run; "none" to clear),
@@ -280,6 +281,21 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         const repairs = r.explained.filter((x) => !x.cached && x.attempts > 1).length;
         console.log(`\nDone: ${r.explained.length} episodes, ${r.calls} model calls, $${r.spentUsd.toFixed(2)} reported, ${repairs} needed a repair`
           + `${r.skippedForBudget.length ? `, ${r.skippedForBudget.length} skipped to stay under the cap` : ""}.`);
+        break;
+      }
+      case "memory": {
+        const p = project(store, args[0]);
+        ensureMemory(store, p.id, { force: args.includes("--rebuild") });
+        const all = loadMemory(store, p.id);
+        const of = (k: string) => all.filter((m) => m.kind === k);
+        const comps = of("component"), probs = of("problem"), decs = of("decision"), cons = of("concept"), qs = of("question");
+        console.log(`Components (${comps.length}):`);
+        for (const c of comps.slice(0, 8)) console.log(`  ${c.title.padEnd(28)} ${(c.data as any).commits} commits, ${(c.data as any).fileChanges} edits seen, ${(c.data as any).fileCount} files`);
+        console.log(`\nProblems and fixes (${probs.length}: ${probs.filter((m) => (m.data as any).status === "fixed").length} fixed, ${probs.filter((m) => (m.data as any).status === "open").length} open):`);
+        for (const m of [...probs].sort((a, b) => b.sortKey - a.sortKey).slice(0, 6)) console.log(`  [${(m.data as any).status}] ${m.title.slice(0, 100)}`);
+        console.log(`\nDecisions (${decs.length}) · Concepts (${cons.length}) · Unknowns (${qs.length})`);
+        for (const d of decs.slice(0, 4)) console.log(`  [${(d.data as any).claimKind}] ${d.title.slice(0, 100)}`);
+        console.log(`\nDecisions, concepts and unknowns come from explained episodes; explain more episodes to fill them in.`);
         break;
       }
       case "serve": {

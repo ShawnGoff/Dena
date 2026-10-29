@@ -157,3 +157,12 @@ describe("explanations API", () => {
     expect((await req(`/api/projects/${pid}/settings`, { method: "POST", body: { model: null } })).json.model).toBeNull();
   });
 });
+
+describe("memory API", () => {
+  it("builds and returns project memory", async () => {
+    const m = (await req(`/api/projects/${pid}/memory`)).json;
+    expect(m.components.map((c: any) => c.title)).toContain("src");
+    expect(Object.keys(m.episodes).length).toBeGreaterThan(0);
+    expect(m.concepts).toEqual([]);
+  });
+});

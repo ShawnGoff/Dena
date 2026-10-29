@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { StoredEvent, Store } from "@dena/core";
 import { git, hookInstall, Recorder } from "@dena/adapters";
-import { ClaudeCodeProvider, claudeAuthStatus, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
+import { ClaudeCodeProvider, claudeAuthStatus, ensureMemory, loadMemory, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
 
 /**
  * Dena's local server: a JSON API over the store plus the built web UI.
@@ -153,6 +153,16 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       } finally {
         inFlight.delete(key);
       }
+    }
+
+    if (sub[0] === "memory" && method === "GET") {
+      ensureMemory(store, p.id, { force: url.searchParams.get("rebuild") === "1" });
+      const all = loadMemory(store, p.id);
+      const eps = Object.fromEntries(loadEpisodes(store, p.id).map((e) => [e.id, { position: e.position, title: e.title }]));
+      const of = (k: string) => all.filter((m) => m.kind === k);
+      return { components: of("component"), problems: of("problem").sort((a, b) => b.sortKey - a.sortKey), decisions: of("decision"),
+        concepts: of("concept"), questions: of("question"), episodes: eps,
+        explainedEpisodes: (store.db.prepare("SELECT COUNT(DISTINCT unit_id) n FROM explanation WHERE project_id = ?").get(p.id) as { n: number }).n };
     }
 
     if (sub[0] === "auth" && method === "GET") {

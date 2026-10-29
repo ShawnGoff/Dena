@@ -80,6 +80,10 @@ describe("stopping a generation", () => {
     setTimeout(() => controller.abort(), 150);
     await expect(call).rejects.toBeInstanceOf(StoppedError);
     expect(Date.now() - started).toBeLessThan(3_000);
+    // The whole process group is gone, including the `sleep` the script started.
+    await new Promise((r) => setTimeout(r, 300));
+    const { execSync } = await import("node:child_process");
+    expect(execSync(`ps -axo command | grep -c "[s]leep 10" || true`, { encoding: "utf8" }).trim()).toBe("0");
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

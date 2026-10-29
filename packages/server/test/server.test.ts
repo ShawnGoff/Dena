@@ -238,3 +238,16 @@ describe("recording left on", () => {
     fs.rmSync(h, { recursive: true, force: true });
   });
 });
+
+describe("activity API", () => {
+  it("lists sessions, returns one with entries, and exports Markdown", async () => {
+    const list = (await req(`/api/projects/${pid}/activity`)).json;
+    expect(Array.isArray(list)).toBe(true);
+    if (list.length) {
+      const one = (await req(`/api/projects/${pid}/activity/session?id=${encodeURIComponent(list[0].id)}`)).json;
+      expect(Array.isArray(one.entries)).toBe(true);
+      const ex = (await req(`/api/projects/${pid}/activity/export?id=${encodeURIComponent(list[0].id)}`)).json;
+      expect(ex.markdown).toContain("what the AI did");
+    }
+  });
+});

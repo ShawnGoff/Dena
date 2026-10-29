@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { correlate, displaySummary, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
-import { formatTokens, exportGuideMarkdown, buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
+import { buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, formatTokens, exportGuideMarkdown, buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
 import { startServer } from "@dena/server";
 
@@ -41,6 +41,9 @@ const USAGE = `dena <command>
   memory <project> [--rebuild]   project memory: components, problems and fixes, decisions, concepts, unknowns
   wiki <project> [section] [--model M] [--force] [--out FILE]
                                  list the wiki pages, or write one (overview, architecture, component:<folder>)
+  log <project> [--session ID|last] [--all] [--out FILE]
+                                 what the AI did, session by session, in plain language (no model used);
+                                 --all includes its replies and bookkeeping
   export <project> [--out FILE]  the whole guide as one Markdown file (current versions, with your edits)
   serve [--port N]               open Dena's interface in your browser (local only; the printed link carries a one-time key)
   config <project> [key value]   show or set: model (e.g. haiku, sonnet; "default" = your Claude Code default),
@@ -323,6 +326,26 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         if (flag("out")) fs.writeFileSync(flag("out")!, md);
         else console.log(md);
         console.error(`· ${s.cached ? "cached" : `written in ${s.attempts} call${s.attempts > 1 ? "s" : ""}`}; ${s.validation.ok ? "passed checks" : "problems remain (shown on the page)"}`);
+        break;
+      }
+      case "log": {
+        const p = project(store, args[0]);
+        const sessions = buildActivityLog(store, p.id);
+        const want = flag("session");
+        if (!want && !args.includes("--out")) {
+          for (const s of sessions)
+            console.log(`${s.id === "outside" ? "outside " : s.id.slice(0, 8)}  ${s.startedAt.slice(0, 16).replace("T", " ")}  ${s.id === "outside" ? `changes outside Claude sessions: ${s.stats.fileChanges} file changes, ${s.stats.commits} commits` : `${s.stats.prompts} prompts, ${s.stats.edits} edits, ${s.stats.commands} commands, ${s.stats.tests} test runs, ${s.stats.commits} commits`}`);
+          console.log(`\nShow one: dena log ${p.name} --session <id prefix>|last`);
+          break;
+        }
+        const s = !want || want === "last" ? sessions[0] : sessions.find((x) => x.id.startsWith(want));
+        if (!s) throw new Error(`No session "${want}"`);
+        const kinds: ActivityKind[] = args.includes("--all") ? [...DEFAULT_KINDS, "reply", "housekeeping"] : DEFAULT_KINDS;
+        const md = renderActivityMarkdown(p.name, s, kinds);
+        if (flag("out")) {
+          fs.writeFileSync(flag("out")!, md);
+          console.log(`Wrote ${flag("out")}`);
+        } else console.log(md);
         break;
       }
       case "export": {

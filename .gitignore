@@ -1,0 +1,7 @@
+node_modules/
+.dena/
+*.db
+*.db-wal
+*.db-shm
+# Real transcripts never get committed; tests use synthetic fixtures only.
+fixtures/private/

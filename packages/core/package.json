@@ -1,0 +1,13 @@
+{
+  "name": "@dena/core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "zod": "^3.24.1"
+  }
+}

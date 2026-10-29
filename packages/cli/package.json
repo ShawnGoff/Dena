@@ -1,0 +1,10 @@
+{
+  "name": "@dena/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@dena/adapters": "0.0.1",
+    "@dena/core": "0.0.1"
+  }
+}

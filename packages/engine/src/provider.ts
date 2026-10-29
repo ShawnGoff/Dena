@@ -136,23 +136,39 @@ export class ClaudeCodeProvider implements Provider {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "dena-gen-"));
     return new Promise((resolve, reject) => {
       const auth = this.opts.auth ?? "account";
-      const child = spawn(this.bin!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: childEnv(auth) });
+      // Its own process group, so Stop and the timeout end everything it started, not just the top process.
+      const child = spawn(this.bin!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: childEnv(auth), detached: true });
+      const killAll = () => {
+        try {
+          if (child.pid) process.kill(-child.pid, "SIGTERM");
+        } catch {
+          child.kill("SIGTERM");
+        }
+      };
+      let settled = false;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        fn();
+      };
       let out = "", err = "";
-      const timer = setTimeout(() => child.kill("SIGTERM"), this.opts.timeoutMs ?? 300_000);
-      let stopped = false;
+      const timer = setTimeout(killAll, this.opts.timeoutMs ?? 300_000);
       const onAbort = () => {
-        stopped = true;
-        child.kill("SIGTERM"); // ends the model call; tokens already spent by it are not reported
+        killAll(); // ends the model call; tokens already spent by it are not reported
+        clearTimeout(timer);
+        fs.rmSync(cwd, { recursive: true, force: true });
+        finish(() => reject(new StoppedError())); // report at once rather than wait for output to close
       };
       callOpts.signal?.addEventListener("abort", onAbort, { once: true });
       child.stdout.on("data", (d) => (out += d));
       child.stderr.on("data", (d) => (err += d));
-      child.on("error", reject);
+      child.on("error", (e) => finish(() => reject(e)));
       child.on("close", (code) => {
         clearTimeout(timer);
         callOpts.signal?.removeEventListener("abort", onAbort);
         fs.rmSync(cwd, { recursive: true, force: true });
-        if (stopped) return reject(new StoppedError());
+        if (settled) return;
+        settled = true;
         let o: any;
         try {
           o = JSON.parse(out);

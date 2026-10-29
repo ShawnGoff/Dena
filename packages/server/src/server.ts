@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, lastHeartbeat, liveRecorder, Recorder, type RecorderOptions } from "@dena/adapters";
-import { packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
+import { buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
   estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
@@ -355,6 +355,21 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         if (e instanceof RevisionConflict) throw new HttpError(409, e.message);
         if (e instanceof HttpError) throw e;
         throw new HttpError(400, (e as Error).message);
+      }
+      throw new HttpError(404, "Not found");
+    }
+
+    if (sub[0] === "activity" && method === "GET") {
+      // Built from events on each request (no model, ~0.1s for thousands of events).
+      const id = url.searchParams.get("id");
+      const sessions = buildActivityLog(store, p.id, id ? { sessionId: id === "outside" ? "__none__" : id } : {});
+      if (!sub[1]) return sessions.map(({ entries, ...s }) => ({ ...s, entryCount: entries.length }));
+      const s = id === "outside" ? buildActivityLog(store, p.id).find((x) => x.id === "outside") : sessions[0];
+      if (!s) throw new HttpError(404, "No such session");
+      if (sub[1] === "session") return s;
+      if (sub[1] === "export") {
+        const kinds = (url.searchParams.get("kinds")?.split(",").filter(Boolean) ?? DEFAULT_KINDS) as ActivityKind[];
+        return { filename: `${p.name.replace(/[^\w.-]+/g, "-")}-ai-log-${s.startedAt.slice(0, 10)}.md`, markdown: renderActivityMarkdown(p.name, s, kinds) };
       }
       throw new HttpError(404, "Not found");
     }

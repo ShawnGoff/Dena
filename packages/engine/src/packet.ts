@@ -33,14 +33,22 @@ export interface Packet {
   truncated: boolean;
 }
 
-const BUDGET = { total: 60_000, prompt: 2_500, response: 1_500, diff: 3_500, output: 600, commitDiff: 5_000 };
+export type Depth = "concise" | "thorough";
+
+/** Character budgets. Input is the bulk of a call's size, so these are the main usage lever. */
+const BUDGETS: Record<Depth, { total: number; prompt: number; response: number; finalResponse: number; diff: number; output: number; command: number; commitDiff: number }> = {
+  thorough: { total: 40_000, prompt: 2_000, response: 600, finalResponse: 1_500, diff: 2_500, output: 400, command: 800, commitDiff: 3_500 },
+  concise: { total: 18_000, prompt: 1_200, response: 300, finalResponse: 900, diff: 1_200, output: 250, command: 400, commitDiff: 1_500 },
+};
 
 function cut(s: string, n: number): { text: string; cut: boolean } {
   return s.length <= n ? { text: s, cut: false } : { text: `${s.slice(0, n)}\n[… ${s.length - n} more characters not included]`, cut: true };
 }
 
-export function buildPacket(store: Store, projectId: string, unitId: string): Packet {
+export function buildPacket(store: Store, projectId: string, unitId: string, opts: { depth?: Depth } = {}): Packet {
+  const BUDGET = BUDGETS[opts.depth ?? "thorough"];
   const events = episodeEvents(store, projectId, unitId);
+  const lastResponseId = [...events].reverse().find((e) => e.eventType === "ai_response_received" && !(e.payload as any).sidechain)?.id;
   const byId = new Map(events.map((e) => [e.id, e]));
   const bySid = new Map(events.map((e) => [`${e.source}|${e.sourceEventId}`, e]));
   const links = (id: number) => store.linksFor(id);
@@ -71,8 +79,9 @@ export function buildPacket(store: Store, projectId: string, unitId: string): Pa
           text: `${e.actor === "user" ? "USER PROMPT" : "SUBAGENT INSTRUCTION (from the main agent)"}:\n${take(String(p.text ?? e.summary), BUDGET.prompt)}` });
         break;
       case "ai_response_received":
+        // The closing reply usually summarises the work; earlier ones mostly narrate what the evidence already shows.
         items.push({ kind: "ai_response", eventIds: [e.id], at, facts: {},
-          text: `AI RESPONSE${p.sidechain ? " (subagent)" : ""}:\n${take(String(p.text ?? e.summary), BUDGET.response)}` });
+          text: `AI RESPONSE${p.sidechain ? " (subagent)" : ""}:\n${take(String(p.text ?? e.summary), e.id === lastResponseId ? BUDGET.finalResponse : BUDGET.response)}` });
         break;
       case "agent_note":
         items.push({ kind: "agent_note", eventIds: [e.id], at, facts: { noteKind: p.kind },
@@ -100,7 +109,7 @@ export function buildPacket(store: Store, projectId: string, unitId: string): Pa
           const exit = hp.exitCode !== undefined && hp.exitCode !== null ? `exit code ${hp.exitCode}` : rp.status === "error" ? "failed (non-zero exit)" : rp.status === "ok" ? "succeeded" : "no result recorded";
           const out = [rp.stdout, rp.stderr].filter(Boolean).join("\n").trim();
           const lines = [
-            `${isTest ? "TEST RUN" : "COMMAND"} run by the AI: ${take(String(p.input?.command ?? ""), 1_200)}`,
+            `${isTest ? "TEST RUN" : "COMMAND"} run by the AI: ${take(String(p.input?.command ?? ""), BUDGET.command)}`,
             p.input?.description ? `stated purpose: ${p.input.description}` : null,
             `result: ${exit}${hp.durationMs ? `, ${hp.durationMs} ms` : ""}`,
             isTest ? `test outcome: ${rp.outcome}${rp.testsPassed != null ? ` (${rp.testsPassed} passed, ${rp.testsFailed ?? 0} failed)` : ""} — ${rp.outcomeBasis}` : null,
@@ -191,6 +200,7 @@ export function buildPacket(store: Store, projectId: string, unitId: string): Pa
   }
 
   items.sort((a, b) => a.at.localeCompare(b.at));
+  foldRepeatedTests(items);
   // Enforce the total budget from the end of the episode backwards: the opening prompt matters most.
   let total = 0;
   const kept = items.filter((it) => {
@@ -203,6 +213,36 @@ export function buildPacket(store: Store, projectId: string, unitId: string): Pa
   });
   const final = kept.map((it, i) => ({ ...it, ref: `E${i + 1}`, text: redactText(it.text) }));
   return { unitId, items: final, hash: sha256(JSON.stringify(final.map((i) => [i.ref, i.text]))), chars: final.reduce((n, i) => n + i.text.length, 0), truncated };
+}
+
+/**
+ * Agents re-run the same tests many times. Keep the runs that tell the story (the first, every
+ * change of outcome, the last) and fold the rest into a count on the next kept run. Folded runs
+ * keep their event ids, so nothing becomes uncitable.
+ */
+function foldRepeatedTests(items: Omit<EvidenceItem, "ref">[]): void {
+  const tests = items.filter((i) => i.kind === "test");
+  if (tests.length <= 2) return;
+  const drop = new Set<Omit<EvidenceItem, "ref">>();
+  let pendingIds: number[] = [];
+  let pendingCount = 0;
+  tests.forEach((t, i) => {
+    const prev = tests[i - 1];
+    const keep = i === 0 || i === tests.length - 1 || t.facts.outcome !== prev?.facts.outcome || tests[i + 1]?.facts.outcome !== t.facts.outcome;
+    if (!keep) {
+      drop.add(t);
+      pendingIds.push(...t.eventIds);
+      pendingCount++;
+      return;
+    }
+    if (pendingCount) {
+      t.eventIds = [...pendingIds, ...t.eventIds];
+      t.text = `(${pendingCount} earlier run${pendingCount > 1 ? "s" : ""} with the same outcome folded into this item)\n${t.text}`;
+      pendingIds = [];
+      pendingCount = 0;
+    }
+  });
+  for (let i = items.length - 1; i >= 0; i--) if (drop.has(items[i]!)) items.splice(i, 1);
 }
 
 /** The exact text sent to the model; also what `dena packet` shows the user. */

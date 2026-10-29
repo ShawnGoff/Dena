@@ -25,7 +25,7 @@ const SECTIONS = ["whatHappened", "whyItMattered", "howItWorks", "whatChanged", 
 const PASS = /\b(pass(es|ed|ing)?|succeed(s|ed)?|green|all tests)\b/i;
 const FAIL = /\b(fail(s|ed|ing|ure)?|broke|red)\b/i;
 
-export function validateStep(step: Step, packet: Packet): Validation {
+export function validateStep(step: Step, packet: Packet, opts: { depth?: "concise" | "thorough" } = {}): Validation {
   const issues: Issue[] = [];
   const items = new Map(packet.items.map((i) => [i.ref, i]));
   const counts = { observed: 0, inferred: 0, agent_stated: 0, background: 0 };
@@ -74,8 +74,9 @@ export function validateStep(step: Step, packet: Packet): Validation {
   // Depth: an explanation that only restates what happened has not taught anything.
   const howChars = step.howItWorks.reduce((n, c) => n + c.text.length, 0);
   const substantial = packet.items.some((i) => i.kind === "file_change" || i.kind === "commit");
-  if (substantial && howChars < 400) issues.push({ severity: "warning", section: "howItWorks", message: `only ${howChars} characters; the mechanism is not really explained` });
-  if (substantial && step.whatChanged.length === 0) issues.push({ severity: "warning", section: "whatChanged", message: "files changed but nothing is described" });
+  const minHow = opts.depth === "concise" ? 150 : 400;
+  if (step.generatedBy !== "facts" && substantial && howChars < minHow)
+    issues.push({ severity: "warning", section: "howItWorks", message: `only ${howChars} characters; the mechanism is not really explained` });
   if (packet.truncated && !step.uncertainty.some((u) => /truncat|not included|cut|partial/i.test(u)))
     issues.push({ severity: "warning", section: "uncertainty", message: "evidence was truncated but the step does not say so" });
 

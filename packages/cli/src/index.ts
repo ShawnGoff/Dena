@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { correlate, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
-import { buildPacket, ClaudeCodeProvider, explainEpisode, loadEpisodes, rebuildEpisodes, renderPacket, renderStep } from "@dena/engine";
+import { buildPacket, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
 
 const HOME = process.env.DENA_HOME ?? path.join(os.homedir(), ".dena");
@@ -32,9 +32,13 @@ const USAGE = `dena <command>
   ingest-hooks <project>         process hook calls collected while not recording
   episodes <project>             group activity into episodes (rebuilt from events)
   packet <project> <episode>     show exactly what evidence would be sent to the model
-  explain <project> <episode> [--force] [--model M] [--out FILE]
-                                 explain one episode with your Claude Code model (cached)
+  explain <project> <episode> [--force] [--model M] [--depth concise|thorough] [--out FILE]
+                                 explain one episode (cached; episodes with no changes need no model)
                                  <episode> is a number from "episodes", an ep_ id, or "last"
+  guide build <project> [--from N] [--to N] [--model M] [--depth D] [--max-usd X] [--yes]
+                                 explain many episodes in as few calls as possible; shows an estimate first
+  config <project> [key value]   show or set: model (e.g. haiku, sonnet; "default" = your Claude Code default),
+                                 depth (concise|thorough), max-usd (per batch run; "none" to clear)
   timeline <project> [--session S] [--all]
                                  activity grouped by prompt
   show <project> <eventId>       one event with its links and artifacts
@@ -225,20 +229,70 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         const ref = args[1] ?? "last";
         const ep = ref === "last" ? eps[eps.length - 1] : eps.find((e) => e.id === ref || String(e.position) === ref);
         if (!ep) throw new Error(`No episode "${ref}". Run: dena episodes ${p.name}`);
+        const depth = (flag("depth") ?? store.projectSettings(p.id).depth) as Depth;
         if (cmd === "packet") {
-          const pk = buildPacket(store, p.id, ep.id);
+          const pk = buildPacket(store, p.id, ep.id, { depth });
           console.log(`${pk.items.length} items, ${pk.chars} characters${pk.truncated ? ", some truncated" : ""}. This text, after redaction, is what the model sees:\n`);
           console.log(renderPacket(pk));
           break;
         }
-        const provider = new ClaudeCodeProvider(undefined, { model: flag("model") });
-        const x = await explainEpisode(store, p.id, ep.id, provider, { force: args.includes("--force"), log: (m) => console.error(`· ${m}`) });
+        const provider = new ClaudeCodeProvider();
+        const x = await explainEpisode(store, p.id, ep.id, provider, { force: args.includes("--force"), model: flag("model"), depth,
+          log: (m) => console.error(`· ${m}`) });
         const md = renderStep(x);
         if (flag("out")) {
           fs.writeFileSync(flag("out")!, md);
           console.error(`· wrote ${flag("out")}`);
         } else console.log(md);
-        console.error(`· ${x.cached ? "cached" : `generated in ${x.attempts} attempt${x.attempts > 1 ? "s" : ""}`}; ${x.validation.ok ? "passed checks" : `${x.validation.issues.filter((i) => i.severity === "error").length} problems remain (shown in the step)`}`);
+        console.error(`· ${x.cached ? "cached" : x.step.generatedBy === "facts" ? "built from facts (no model call)" : `generated in ${x.attempts} call${x.attempts > 1 ? "s" : ""}${x.costUsd ? `, $${x.costUsd.toFixed(3)} reported` : ""}`}; ${x.validation.ok ? "passed checks" : `${x.validation.issues.filter((i) => i.severity === "error").length} problems remain (shown in the step)`}`);
+        break;
+      }
+      case "guide": {
+        if (args[0] !== "build") throw new Error("Use: dena guide build <project>");
+        const p = project(store, args[1]);
+        rebuildEpisodes(store, p.id);
+        const eps = loadEpisodes(store, p.id);
+        const from = Number(flag("from") ?? 1), to = Number(flag("to") ?? eps.length);
+        const ids = eps.filter((e) => e.position >= from && e.position <= to).map((e) => e.id);
+        const o = { model: flag("model"), depth: flag("depth") as Depth | undefined, force: args.includes("--force") };
+        const est = estimate(store, p.id, ids, o);
+        const s = store.projectSettings(p.id);
+        const maxUsd = flag("max-usd") ? Number(flag("max-usd")) : s.maxUsdPerRun;
+        console.log(`Episodes ${from}–${to}: ${est.episodes} total
+  ${est.cached} already explained (free), ${est.factsOnly} with no changes (built from facts, free)
+  ${est.modelCalls} model call${est.modelCalls === 1 ? "" : "s"} for the rest (small episodes share calls), ~${Math.round(est.inputChars / 1000)}k characters of evidence
+  model: ${o.model ?? s.model ?? "your Claude Code default"} · depth: ${o.depth ?? s.depth}
+  estimated usage: ${est.estimatedUsd !== null ? `~$${est.estimatedUsd.toFixed(2)} as Claude Code reports it (${est.basis})` : est.basis}${maxUsd !== undefined ? `\n  cap: stops before exceeding $${maxUsd}` : ""}`);
+        if (!est.modelCalls) {
+          if (est.factsOnly) await explainMany(store, p.id, ids, new ClaudeCodeProvider(), o);
+          console.log("Nothing needs a model.");
+          break;
+        }
+        if (!args.includes("--yes")) {
+          console.log("\nNothing generated. Re-run with --yes to go ahead.");
+          break;
+        }
+        const r = await explainMany(store, p.id, ids, new ClaudeCodeProvider(), { ...o, maxUsd, log: (m) => console.error(`· ${m}`),
+          onProgress: (x) => !x.cached && console.error(`  ✓ ${x.unitId} ${x.step.generatedBy === "facts" ? "(facts)" : x.batched ? "(shared call)" : ""}${x.validation.ok ? "" : " ⚠ problems remain"}`) });
+        const repairs = r.explained.filter((x) => !x.cached && x.attempts > 1).length;
+        console.log(`\nDone: ${r.explained.length} episodes, ${r.calls} model calls, $${r.spentUsd.toFixed(2)} reported, ${repairs} needed a repair`
+          + `${r.skippedForBudget.length ? `, ${r.skippedForBudget.length} skipped to stay under the cap` : ""}.`);
+        break;
+      }
+      case "config": {
+        const p = project(store, args[0]);
+        const [key, value] = [args[1], args[2]];
+        if (key) {
+          if (value === undefined) throw new Error("Give a value, e.g. dena config myproj model haiku");
+          if (key === "model") store.updateProjectSettings(p.id, { model: value === "default" ? undefined : value });
+          else if (key === "depth") {
+            if (value !== "concise" && value !== "thorough") throw new Error("depth is concise or thorough");
+            store.updateProjectSettings(p.id, { depth: value });
+          } else if (key === "max-usd") store.updateProjectSettings(p.id, { maxUsdPerRun: value === "none" ? undefined : Number(value) });
+          else throw new Error(`Unknown setting "${key}"`);
+        }
+        const s = store.projectSettings(p.id);
+        console.log(`model:   ${s.model ?? "(your Claude Code default)"}\ndepth:   ${s.depth}\nmax-usd: ${s.maxUsdPerRun ?? "(no cap)"}\nexclude: ${s.exclude.join(", ") || "(defaults only)"}`);
         break;
       }
       case "gaps": {

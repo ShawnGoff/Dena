@@ -206,6 +206,40 @@ CREATE TABLE explanation (
 );
 `,
   },
+  {
+    version: 5,
+    name: "explanation_usage_tracking",
+    // Keep one cached explanation per model (so models can be compared) and record what each
+    // generation used: attempts (repairs), depth, and input/output size.
+    sql: `
+CREATE TABLE explanation_new (
+  id              INTEGER PRIMARY KEY,
+  project_id      TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  unit_id         TEXT NOT NULL,
+  packet_hash     TEXT NOT NULL,
+  prompt_version  INTEGER NOT NULL,
+  requested_model TEXT NOT NULL DEFAULT '',
+  model           TEXT,
+  depth           TEXT NOT NULL DEFAULT 'thorough',
+  generated_by    TEXT NOT NULL DEFAULT 'model',
+  attempts        INTEGER NOT NULL DEFAULT 1,
+  batched         INTEGER NOT NULL DEFAULT 0,
+  input_chars     INTEGER NOT NULL DEFAULT 0,
+  output_chars    INTEGER NOT NULL DEFAULT 0,
+  content_json    TEXT NOT NULL,
+  validation_json TEXT NOT NULL,
+  evidence_json   TEXT NOT NULL,
+  cost_usd        REAL,
+  created_at      TEXT NOT NULL,
+  UNIQUE (project_id, unit_id, packet_hash, prompt_version, requested_model)
+);
+INSERT INTO explanation_new (id, project_id, unit_id, packet_hash, prompt_version, model, content_json, validation_json, evidence_json, cost_usd, created_at)
+  SELECT id, project_id, unit_id, packet_hash, prompt_version, model, content_json, validation_json, evidence_json, cost_usd, created_at FROM explanation;
+DROP TABLE explanation;
+ALTER TABLE explanation_new RENAME TO explanation;
+CREATE INDEX explanation_unit ON explanation(project_id, unit_id, created_at);
+`,
+  },
 ];
 
 export function migrate(db: Database.Database): number {

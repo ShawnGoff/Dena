@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { correlate, Store, type IngestBatch, type NewEvent } from "@dena/core";
 import {
-  buildEpisodes, buildPacket, explainEpisode, rebuildEpisodes, renderPacket, renderStep, validateStep,
+  buildEpisodes, buildPacket, estimate, explainEpisode, explainMany, rebuildEpisodes, renderPacket, renderStep, validateStep,
   type GenerateResult, type Provider, type Step,
 } from "../src/index.ts";
 
@@ -95,16 +95,20 @@ function goodStep(): Step {
     verification: [claim("After the fix all 3 tests passed.", "observed", [pass])],
     concepts: [{ term: "RFC 4180", explanation: "The common CSV format description." }],
     uncertainty: [],
+    generatedBy: "model",
   };
 }
 
 class FakeProvider implements Provider {
   name = "fake";
   calls: string[] = [];
-  constructor(private readonly answers: Step[]) {}
-  async generate(_s: string, user: string): Promise<GenerateResult> {
+  models: (string | undefined)[] = [];
+  constructor(private readonly answers: (Step | ((user: string, schema: any) => unknown))[]) {}
+  async generate(_s: string, user: string, schema: object, opts?: { model?: string }): Promise<GenerateResult> {
     this.calls.push(user);
-    return { json: this.answers[Math.min(this.calls.length - 1, this.answers.length - 1)], model: "fake-model", costUsd: 0.01, durationMs: 1 };
+    this.models.push(opts?.model);
+    const a = this.answers[Math.min(this.calls.length - 1, this.answers.length - 1)]!;
+    return { json: typeof a === "function" ? a(user, schema) : a, model: opts?.model ?? "fake-model", costUsd: 0.01, durationMs: 1 };
   }
 }
 
@@ -174,7 +178,7 @@ describe("validator", () => {
 describe("explainEpisode", () => {
   it("repairs once, caches by evidence, and regenerates when evidence changes", async () => {
     const bad = goodStep();
-    bad.verification = [claim("Tests passed.", "observed", ["E99"])];
+    bad.whatHappened = [claim("Tests passed.", "observed", ["E99"])];
     const fake = new FakeProvider([bad, goodStep()]);
     const ep = rebuildEpisodes(store, pid)[0]!;
 
@@ -205,5 +209,85 @@ describe("explainEpisode", () => {
     expect(md).toContain("⚠️ *failed a check");
     expect(md).toContain("### Checks");
     expect(md).toContain("**💬 Agent said**");
+  });
+});
+
+describe("usage savings", () => {
+  it("explains a no-change episode from facts, with no model call", async () => {
+    const fake = new FakeProvider([goodStep()]);
+    const qa = rebuildEpisodes(store, pid)[1]!; // "What does RFC 4180 say about quotes?"
+    const x = await explainEpisode(store, pid, qa.id, fake);
+    expect(fake.calls).toHaveLength(0);
+    expect(x.step.generatedBy).toBe("facts");
+    expect(x.step.whatHappened.map((c) => c.text).join(" ")).toContain("RFC 4180");
+    expect(renderStep(x)).toContain("No model was used");
+  });
+
+  it("fills what changed and verification from facts, whatever the model says", async () => {
+    const wrong = goodStep();
+    wrong.verification = [claim("Everything passed first time.", "observed", [])];
+    wrong.whatChanged = [claim("Rewrote the database layer.", "observed", [])];
+    const x = await explainEpisode(store, pid, rebuildEpisodes(store, pid)[0]!.id, new FakeProvider([wrong]));
+    expect(x.step.verification.map((c) => c.text)).toEqual(["Test run failed (2 passed, 1 failed).", "Test run passed (3 passed, 0 failed)."]);
+    expect(x.step.whatChanged[0]!.text).toContain('Commit abc1234 "csv parser" changed 1 file: src/csv.ts');
+    expect(JSON.stringify(x.step)).not.toContain("database layer");
+  });
+
+  it("uses the project's model setting, overridable per run", async () => {
+    store.updateProjectSettings(pid, { model: "haiku" });
+    const fake = new FakeProvider([goodStep()]);
+    const ep = rebuildEpisodes(store, pid)[0]!.id;
+    await explainEpisode(store, pid, ep, fake);
+    await explainEpisode(store, pid, ep, fake, { model: "sonnet" });
+    expect(fake.models).toEqual(["haiku", "sonnet"]);
+    // each model's explanation is cached separately
+    expect((await explainEpisode(store, pid, ep, fake, { model: "haiku" })).cached).toBe(true);
+    expect(fake.calls).toHaveLength(2);
+  });
+
+  it("builds smaller packets at concise depth", () => {
+    const ep = rebuildEpisodes(store, pid)[0]!.id;
+    expect(buildPacket(store, pid, ep, { depth: "concise" }).chars).toBeLessThanOrEqual(buildPacket(store, pid, ep, { depth: "thorough" }).chars);
+  });
+
+  it("folds repeated same-outcome test runs but keeps their events citable", () => {
+    const more: NewEvent[] = [];
+    for (let i = 0; i < 4; i++) {
+      more.push(ev(CC, `tool:r${i}`, "tool_invoked", 7 + i * 0.1, { tool: "Bash", input: { command: "npx vitest run" } }));
+      more.push(ev(CC, `result:r${i}`, "test_result", 7 + i * 0.1, { tool: "Bash", status: "ok", outcome: "passed", testsPassed: 3, testsFailed: 0, outcomeBasis: "x" }));
+    }
+    store.ingest(pid, { sessions: [], artifacts: [], gaps: [], events: more,
+      links: [0, 1, 2, 3].map((i) => ({ source: CC, fromSourceEventId: `result:r${i}`, toSourceEventId: `tool:r${i}`, linkType: "result_of" as const, strength: "observed" as const, basis: "t" })) });
+    const p = buildPacket(store, pid, rebuildEpisodes(store, pid)[0]!.id);
+    const tests = p.items.filter((i) => i.kind === "test");
+    expect(tests.length).toBeLessThan(6);
+    expect(tests.some((t) => /earlier runs? with the same outcome folded/.test(t.text))).toBe(true);
+    expect(tests.flatMap((t) => t.eventIds).length).toBe(12); // 6 runs × (call + result), none lost
+  });
+
+  it("batches small episodes into one call, and caps spending", async () => {
+    // Make several small episodes: each prompt edits a file, separated by idle time.
+    const evs: NewEvent[] = [];
+    for (let i = 0; i < 4; i++) {
+      const m = 300 + i * 60;
+      evs.push(ev(CC, `bp${i}`, "prompt_submitted", m, { text: `Tweak ${i}` }, { actor: "user", summary: `Tweak ${i}` }));
+      evs.push(ev("fs", `bf${i}`, "file_modified", m + 1, { file: `src/f${i}.ts`, linesAdded: 1, linesRemoved: 0 }));
+    }
+    store.ingest(pid, { sessions: [], artifacts: [], links: [], gaps: [], events: evs });
+    const eps = rebuildEpisodes(store, pid).filter((e) => e.title.startsWith("Tweak"));
+    expect(eps).toHaveLength(4);
+    const answer = (user: string) => ({ steps: [...user.matchAll(/<episode id="([^"]+)"/g)].map((m) => ({
+      episode: m[1], title: "Small tweak", summary: "A one-line change.", whatHappened: [claim("A file changed.", "observed", ["E2"])],
+      whyItMattered: [], howItWorks: [], decisions: [], concepts: [], uncertainty: [] })) });
+    const fake = new FakeProvider([answer]);
+    const est = estimate(store, pid, eps.map((e) => e.id));
+    expect(est.modelCalls).toBe(1);
+    const r = await explainMany(store, pid, eps.map((e) => e.id), fake);
+    expect(fake.calls).toHaveLength(1);
+    expect(r.explained.every((x) => x.batched && x.validation.ok)).toBe(true);
+
+    const capped = await explainMany(store, pid, eps.map((e) => e.id), new FakeProvider([answer]), { force: true, maxUsd: 0 });
+    expect(capped.calls).toBe(0);
+    expect(capped.skippedForBudget).toHaveLength(4);
   });
 });

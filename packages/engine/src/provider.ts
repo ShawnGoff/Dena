@@ -17,7 +17,8 @@ export interface GenerateResult {
 
 export interface Provider {
   readonly name: string;
-  generate(system: string, user: string, schema: object): Promise<GenerateResult>;
+  /** `opts.model`: any model name or alias the backend accepts; omitted = the backend's default. */
+  generate(system: string, user: string, schema: object, opts?: { model?: string }): Promise<GenerateResult>;
 }
 
 /** Finds a Claude Code binary: $DENA_CLAUDE_BIN, `claude` on PATH, or the desktop app's bundled CLI (newest). */
@@ -46,14 +47,15 @@ export class ClaudeCodeProvider implements Provider {
     if (!this.bin) throw new Error("Could not find Claude Code. Install it, or set DENA_CLAUDE_BIN to its path.");
   }
 
-  generate(system: string, user: string, schema: object): Promise<GenerateResult> {
+  generate(system: string, user: string, schema: object, callOpts: { model?: string } = {}): Promise<GenerateResult> {
+    const model = callOpts.model ?? this.opts.model;
     const args = [
       "-p", "--output-format", "json", "--json-schema", JSON.stringify(schema),
       "--system-prompt", system,
       "--tools", "", // the model explains the evidence it is given; it cannot read files or run anything
       "--no-session-persistence", // Dena's own calls never become transcripts
       "--strict-mcp-config", "--disable-slash-commands",
-      ...(this.opts.model ? ["--model", this.opts.model] : []), // default: the user's configured model
+      ...(model ? ["--model", model] : []), // default: the user's configured model
     ];
     // A neutral working directory keeps project-level hooks and settings out of the call.
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "dena-gen-"));

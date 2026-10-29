@@ -5,3 +5,4 @@ export * from "./provider.ts";
 export * from "./validate.ts";
 export * from "./explain.ts";
 export * from "./render.ts";
+export * from "./facts.ts";

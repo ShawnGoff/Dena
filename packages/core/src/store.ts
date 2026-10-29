@@ -32,6 +32,12 @@ export interface FsFileState {
 export interface ProjectSettings {
   /** Extra excluded paths, relative to the project root. A trailing "/" means a directory; "*" matches within a segment. */
   exclude: string[];
+  /** Model for explanations; any Claude Code model name or alias ("haiku", "sonnet", "claude-haiku-5-5"). Unset = the user's Claude Code default. */
+  model?: string;
+  /** "concise" asks for fewer, shorter claims from smaller packets; "thorough" teaches in more depth. */
+  depth: "concise" | "thorough";
+  /** Optional ceiling on estimated spend for one batch run, in USD as reported by Claude Code. */
+  maxUsdPerRun?: number;
 }
 
 export interface IngestBatch {
@@ -273,7 +279,7 @@ export class Store {
 
   projectSettings(id: string): ProjectSettings {
     const r = this.db.prepare("SELECT settings_json FROM project WHERE id = ?").get(id) as { settings_json: string } | undefined;
-    return { exclude: [], ...(r ? JSON.parse(r.settings_json) : {}) };
+    return { exclude: [], depth: "thorough", ...(r ? JSON.parse(r.settings_json) : {}) };
   }
 
   updateProjectSettings(id: string, patch: Partial<ProjectSettings>): ProjectSettings {

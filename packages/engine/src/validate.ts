@@ -126,6 +126,7 @@ export function autoFixStep(step: Step, packet: Packet, opts: { depth?: "concise
       const i = list.findIndex((c) => c.text.slice(0, 80) === e.claim);
       if (i < 0) continue;
       const c = list[i]!;
+      if (c.edited || c.flagged) continue; // the owner's own words are theirs to change
       if (e.message.startsWith("cites evidence that does not exist")) {
         c.evidence = c.evidence.filter((r) => items.has(r));
         fixes.push(`Dropped a reference to evidence that does not exist from ${short(c.text)}.`);

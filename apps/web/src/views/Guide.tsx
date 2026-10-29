@@ -152,14 +152,8 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
 
       {doc.active && (
         <>
-          <DocBar projectId={projectId} type="step" docKey={ep.id} doc={doc} onChanged={load} viewing={viewing} onView={setViewing} allowContext />
-          {doc.stale && !viewing && (
-            <div className="notice" style={{ marginBottom: 14 }}>
-              New evidence{doc.notes.some((n) => n.status === "open") ? " or your notes" : ""} arrived since this was written.{" "}
-              <button className="btn primary" disabled={!!busy} onClick={() => explain(undefined, true)}>{busy === "default" ? "Updating…" : "Update with new evidence"}</button>
-              {doc.active.meta.userEdited && <span className="faint small"> Your edits are kept; the update will wait for your choice.</span>}
-            </div>
-          )}
+          <DocBar projectId={projectId} type="step" docKey={ep.id} doc={doc} onChanged={() => { onExplained(); load(); }} viewing={viewing} onView={setViewing} allowContext
+            onRewrite={() => explain(undefined, true)} projectModel={info.settings.model} />
           {historical && <HistoricalVersion projectId={projectId} docKey={ep.id} id={viewing!} onRef={onEvent} />}
           {x && <StepView x={x} onRef={onEvent} editable={!viewing} onChange={saveEdit} onMarkIncorrect={markIncorrect} />}
           {!viewing && x?.step.generatedBy !== "facts" && (

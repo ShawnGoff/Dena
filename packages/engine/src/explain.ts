@@ -1,4 +1,4 @@
-import type { Store } from "@dena/core";
+import { sha256, type Store } from "@dena/core";
 import { loadEpisodes } from "./episodes.ts";
 import { factsOnlyStep, needsModel, verificationFromFacts, whatChangedFromFacts } from "./facts.ts";
 import { buildPacket, packetMatches, renderPacket, type Depth, type Packet } from "./packet.ts";
@@ -12,7 +12,8 @@ export interface Explanation {
   unitId: string;
   step: Step;
   validation: Validation;
-  evidence: Record<string, { eventIds: number[]; kind: string; at: string }>;
+  /** Per reference: the events behind it, and a hash of the text the model saw (to tell later whether that evidence changed). */
+  evidence: Record<string, { eventIds: number[]; kind: string; at: string; textHash?: string }>;
   model: string | null;
   costUsd: number | null;
   /** Real tokens used to write it (all attempts), when the model reported them. */
@@ -40,7 +41,7 @@ function resolve(store: Store, projectId: string, opts: ExplainOptions) {
 }
 
 export function evidenceMap(packet: Packet): Explanation["evidence"] {
-  return Object.fromEntries(packet.items.map((i) => [i.ref, { eventIds: i.eventIds, kind: i.kind, at: i.at }]));
+  return Object.fromEntries(packet.items.map((i) => [i.ref, { eventIds: i.eventIds, kind: i.kind, at: i.at, textHash: sha256(i.text) }]));
 }
 
 function cachedRow(store: Store, projectId: string, unitId: string, packet: Packet, model: string): Explanation | null {
@@ -59,6 +60,14 @@ const rowTokens = (r: any): TokenUsage | null =>
   r.prompt_tokens != null ? { prompt: r.prompt_tokens, output: r.output_tokens ?? 0, cacheRead: r.cache_read_tokens ?? 0 } : null;
 
 function save(store: Store, projectId: string, x: Explanation, meta: { requestedModel: string; depth: Depth; inputChars: number }) {
+  cacheExplanation(store, projectId, x, meta);
+  // Every new version also enters the step's revision history (and never overwrites the owner's edits).
+  recordGenerated(store, projectId, "step", x.unitId, x.step, { model: x.model, requestedModel: meta.requestedModel, depth: meta.depth,
+    evidence: x.evidence, validation: x.validation, costUsd: x.costUsd, tokens: x.tokens, attempts: x.attempts, batched: x.batched, packetHash: x.packetHash });
+}
+
+/** Stores an explanation as the current reading of its evidence, so later runs reuse it instead of paying again. */
+export function cacheExplanation(store: Store, projectId: string, x: Explanation, meta: { requestedModel: string; depth: Depth; inputChars: number }) {
   store.db
     .prepare(`INSERT OR REPLACE INTO explanation (project_id, unit_id, packet_hash, prompt_version, requested_model, model, depth, generated_by,
               attempts, batched, input_chars, output_chars, content_json, validation_json, evidence_json, cost_usd, created_at,
@@ -68,9 +77,6 @@ function save(store: Store, projectId: string, x: Explanation, meta: { requested
       x.step.generatedBy, x.attempts, x.batched ? 1 : 0, meta.inputChars, JSON.stringify(x.step).length,
       JSON.stringify(x.step), JSON.stringify(x.validation), JSON.stringify(x.evidence), x.costUsd, new Date().toISOString(),
       x.tokens?.prompt ?? null, x.tokens?.output ?? null, x.tokens?.cacheRead ?? null);
-  // Every new version also enters the step's revision history (and never overwrites the owner's edits).
-  recordGenerated(store, projectId, "step", x.unitId, x.step, { model: x.model, requestedModel: meta.requestedModel, depth: meta.depth,
-    evidence: x.evidence, validation: x.validation, costUsd: x.costUsd, tokens: x.tokens, attempts: x.attempts, batched: x.batched, packetHash: x.packetHash });
 }
 
 function assemble(model: ModelStep, packet: Packet): Step {

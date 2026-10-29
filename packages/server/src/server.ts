@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, lastHeartbeat, liveRecorder, Recorder, type RecorderOptions } from "@dena/adapters";
-import { codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
+import { adoptUpdate, planUpdate, updateSection, updateStep, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
   estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
@@ -323,20 +323,18 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
 
     if (sub[0] === "updates") {
       if (method === "GET") {
-        const outdated = findOutdated(store, p.id);
-        const steps = outdated.filter((o) => o.type === "step").map((o) => o.key);
-        const est = steps.length ? estimate(store, p.id, steps, { force: true }) : null;
-        const wikiTok = outdated.filter((o) => o.type === "wiki").map((o) => estimateSectionTokens(store, p.id, buildBrief(store, p.id, o.key as SectionKey)));
-        const tokens = { prompt: (est?.promptTokens ?? 0) + wikiTok.reduce((n, t) => n + t.promptTokens, 0),
-          output: (est?.outputTokens ?? 0) + wikiTok.reduce((n, t) => n + t.outputTokens, 0),
-          low: (est?.tokensLow ?? 0) + wikiTok.reduce((n, t) => n + t.low, 0), high: (est?.tokensHigh ?? 0) + wikiTok.reduce((n, t) => n + t.high, 0),
-          calibrated: (est?.tokensCalibrated ?? true) && wikiTok.every((t) => t.calibrated), basis: est?.tokenBasis ?? wikiTok[0]?.basis ?? "" };
-        return { outdated, estimate: est, tokens, jobs: listJobs(store, p.id, 30), running: runners.has(p.id),
+        const all = findOutdated(store, p.id);
+        const outdated = all.filter((o) => !o.waiting);
+        // Targeted updates send only what changed, so the estimate comes from each document's plan.
+        const plans = outdated.map((o) => planUpdate(store, p.id, o.type, o.key)?.estimate).filter((x): x is NonNullable<typeof x> => !!x);
+        const tokens = { prompt: plans.reduce((n, t) => n + t.promptTokens, 0), output: plans.reduce((n, t) => n + t.outputTokens, 0),
+          low: plans.reduce((n, t) => n + t.low, 0), high: plans.reduce((n, t) => n + t.high, 0), calibrated: plans.every((t) => t.calibrated), basis: plans[0]?.basis ?? "" };
+        return { outdated, waiting: all.filter((o) => o.waiting), estimate: null, tokens, jobs: listJobs(store, p.id, 30), running: runners.has(p.id),
           settings: { model: store.projectSettings(p.id).model ?? null, maxUsdPerRun: store.projectSettings(p.id).maxUsdPerRun ?? null } };
       }
       if (method !== "POST") throw new HttpError(405, "Method not allowed");
       if (sub[1] === "run") {
-        const outdated = findOutdated(store, p.id);
+        const outdated = findOutdated(store, p.id).filter((o) => !o.waiting);
         const wanted = Array.isArray(body?.items) ? outdated.filter((o) => body.items.some((i: any) => i?.type === o.type && i?.key === o.key)) : outdated;
         const queued = enqueue(store, p.id, wanted.map((o) => ({ type: o.type, key: o.key })));
         runUpdates(p.id);
@@ -366,7 +364,12 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
             ? !packetMatches(buildPacket(store, p.id, key, { depth: active.meta.depth ?? store.projectSettings(p.id).depth }), active.meta.packetHash)
             : buildBrief(store, p.id, key as SectionKey).hash !== active.meta.inputHash;
         const slim = (r: ReturnType<typeof activeRevision>) => r && { id: r.id, origin: r.origin, status: r.status, note: r.note, createdAt: r.createdAt, model: r.meta.model ?? null, userEdited: !!r.meta.userEdited };
-        return { active, proposed: proposedRevision(store, p.id, type, key), stale, history: revisions(store, p.id, type, key).map(slim), notes: notesFor(store, p.id, type, key, { all: true }) };
+        const proposed = proposedRevision(store, p.id, type, key);
+        // What a targeted update would keep and send, for the estimate before running it.
+        const plan = stale && !proposed ? planUpdate(store, p.id, type, key) : null;
+        const update = plan && { kept: plan.kept.length, review: plan.affected.length, fresh: plan.fresh.length, send: plan.sendRefs.length, of: plan.allRefs, needsModel: plan.needsModel, estimate: plan.estimate };
+        return { active, proposed, stale, update, busy: inFlight.has(type === "step" ? `${p.id}:${key}` : `${p.id}:wiki:${key}`),
+          history: revisions(store, p.id, type, key).map(slim), notes: notesFor(store, p.id, type, key, { all: true }) };
       }
       if (method === "GET" && action === "revision") {
         const r = revisions(store, p.id, type, key).find((x) => x.id === Number(url.searchParams.get("id")));
@@ -374,6 +377,26 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         return { revision: r };
       }
       if (method !== "POST") throw new HttpError(405, "Method not allowed");
+      if (action === "update") {
+        const model = body?.model ?? undefined;
+        if (model !== undefined && (typeof model !== "string" || !MODEL_NAME.test(model))) throw new HttpError(400, "Invalid model name");
+        const flight = type === "step" ? `${p.id}:${key}` : `${p.id}:wiki:${key}`; // the same Stop buttons end it
+        if (inFlight.has(flight)) throw new HttpError(409, "This document is already being written");
+        const controller = new AbortController();
+        inFlight.set(flight, controller);
+        try {
+          const o = { model, signal: controller.signal, log: (m: string) => log(`[${p.name}] update ${type} ${key}: ${m}`) };
+          const r = type === "step" ? await updateStep(store, p.id, key, getProvider(p.id), o) : await updateSection(store, p.id, key as SectionKey, getProvider(p.id), o);
+          return { diff: r.diff, calledModel: r.calledModel, ok: r.ok, tokens: r.tokens };
+        } catch (e) {
+          if (stopped(e)) throw new HttpError(409, (e as Error).message);
+          const msg = (e as Error).message;
+          log(`[${p.name}] update ${type} ${key} failed: ${msg}`);
+          throw new HttpError(502, /^(Claude Code|Claude is|Your Anthropic|No valid API key|This (episode|page))/.test(msg) ? msg : "The model call failed. Check Claude Code's sign-in, then try again.");
+        } finally {
+          inFlight.delete(flight);
+        }
+      }
       try {
         if (action === "edit") {
           const parsed = (type === "step" ? Step : WikiSection).safeParse(body?.content);
@@ -381,7 +404,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
           const note = typeof body?.note === "string" ? body.note.slice(0, 500) : undefined;
           return saveUserEdit(store, p.id, type, key, parsed.data, Number(body?.baseId), note);
         }
-        if (action === "adopt") return adoptProposed(store, p.id, type, key, Number(body?.id));
+        if (action === "adopt") return adoptUpdate(store, p.id, type, key, Number(body?.id));
         if (action === "decline") return declineProposed(store, p.id, type, key, Number(body?.id)), { ok: true };
         if (action === "restore") return restoreRevision(store, p.id, type, key, Number(body?.id));
         if (action === "note") {

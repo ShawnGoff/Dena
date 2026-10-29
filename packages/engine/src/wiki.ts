@@ -321,14 +321,20 @@ export async function generateSection(store: Store, projectId: string, key: Sect
     validation = validateSection(section, brief);
     attempts = 2;
   }
+  cacheSection(store, projectId, key, { inputHash: brief.hash, requestedModel: model, model: res.model, attempts, section, validation, sources: brief.sources, costUsd: cost, inputChars: sentChars, tokens });
+  recordGenerated(store, projectId, "wiki", key, section, { model: res.model, requestedModel: model, sources: brief.sources, validation, costUsd: cost, tokens, attempts, inputHash: brief.hash });
+  return { key, section, validation, sources: brief.sources, model: res.model, requestedModel: model, costUsd: cost, tokens, attempts, createdAt: new Date().toISOString(), stale: false, cached: false };
+}
+
+/** Stores a page as the current reading of its brief, so later runs reuse it instead of paying again. */
+export function cacheSection(store: Store, projectId: string, key: SectionKey, x: { inputHash: string; requestedModel: string; model: string | null; attempts: number; section: WikiSection;
+  validation: WikiValidation; sources: WikiSource[]; costUsd: number | null; inputChars: number; tokens: TokenUsage | null }) {
   store.db
     .prepare(`INSERT OR REPLACE INTO wiki_section (project_id, key, input_hash, prompt_version, requested_model, model, attempts, content_json, validation_json, sources_json, cost_usd, created_at,
               input_chars, prompt_tokens, output_tokens, cache_read_tokens)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(projectId, key, brief.hash, WIKI_PROMPT_VERSION, model, res.model, attempts, JSON.stringify(section), JSON.stringify(validation), JSON.stringify(brief.sources), cost, new Date().toISOString(),
-      sentChars, tokens?.prompt ?? null, tokens?.output ?? null, tokens?.cacheRead ?? null);
-  recordGenerated(store, projectId, "wiki", key, section, { model: res.model, requestedModel: model, sources: brief.sources, validation, costUsd: cost, tokens, attempts, inputHash: brief.hash });
-  return { key, section, validation, sources: brief.sources, model: res.model, requestedModel: model, costUsd: cost, tokens, attempts, createdAt: new Date().toISOString(), stale: false, cached: false };
+    .run(projectId, key, x.inputHash, WIKI_PROMPT_VERSION, x.requestedModel, x.model, x.attempts, JSON.stringify(x.section), JSON.stringify(x.validation), JSON.stringify(x.sources), x.costUsd,
+      new Date().toISOString(), x.inputChars, x.tokens?.prompt ?? null, x.tokens?.output ?? null, x.tokens?.cacheRead ?? null);
 }
 
 /** Markdown for one wiki page; the structured section stays the source of truth. */

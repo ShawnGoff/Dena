@@ -14,6 +14,9 @@ class FakeProvider implements Provider {
   async generate(_s: string, _u: string, _schema: object, o?: { model?: string }): Promise<GenerateResult> {
     this.models.push(o?.model);
     const props = (_schema as any).properties;
+    if (props?.updates) // a targeted update: add one statement from the new evidence
+      return { json: { title: "Added a quaternion helper", summary: "s", updates: [{ section: "whatHappened", replaces: "", text: "The owner added context.", kind: "owner_stated", evidence: [[..._u.matchAll(/^\[(E\d+)\]/gm)].map((m) => m[1])[0]] }], remove: [], uncertainty: [] },
+        model: "fake-default", costUsd: 0, durationMs: 1 };
     if (props?.symbols) { // a code explainer call
       const symbols = [..._u.matchAll(/<symbol key=("[^"]*")/g)].map((m) => ({ key: JSON.parse(m[1]!), summary: "Does a thing.", how: [], learn: [], watch: [] }));
       return { json: { symbols, ...(props.file ? { file: { purpose: "A helper.", fitsIn: [], learn: [], readingOrder: [] } } : {}) }, model: "fake-default", costUsd: 0, durationMs: 1 };
@@ -194,6 +197,21 @@ describe("document revisions API", () => {
     expect(after.stale).toBe(true); // a new note changes what the writer would see
     await req(`/api/projects/${pid}/doc/restore`, { method: "POST", body: { type: "step", key: ep.id, id: d.active.id } });
     expect((await req(q)).json.active.content.summary).toBe(d.active.content.summary);
+
+    // A targeted update: the note is new evidence; the result waits for review with its diff.
+    const offer = (await req(q)).json;
+    expect(offer.update).toMatchObject({ needsModel: true, fresh: 1 });
+    expect(offer.update.send).toBeLessThan(offer.update.of);
+    const u = await req(`/api/projects/${pid}/doc/update`, { method: "POST", body: { type: "step", key: ep.id } });
+    expect(u.status).toBe(200);
+    expect(u.json.diff.added.map((x: any) => x.text)).toEqual(["The owner added context."]);
+    const waiting = (await req(q)).json;
+    expect(waiting.proposed.meta.targeted).toBe(true);
+    expect(waiting.update).toBeNull();
+    await req(`/api/projects/${pid}/doc/adopt`, { method: "POST", body: { type: "step", key: ep.id, id: waiting.proposed.id } });
+    const applied = (await req(q)).json;
+    expect(applied.stale).toBe(false);
+    expect(applied.active.content.whatHappened.map((c: any) => c.text)).toContain("The owner added context.");
   });
 });
 

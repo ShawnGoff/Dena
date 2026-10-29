@@ -3,11 +3,12 @@ import { api } from "../api";
 import { Badge } from "./Bits";
 import { tokenRange, when } from "../format";
 
-interface Outdated { type: "step" | "wiki"; key: string; title: string; reason: string; userEdited: boolean; chars: number }
+interface Outdated { type: "step" | "wiki"; key: string; title: string; reason: string; userEdited: boolean; chars: number; waiting: boolean }
 interface Job { id: number; type: string; key: string; status: string; attempts: number; nextAt: string; lastError: string | null; result: string | null; updatedAt: string }
 interface Updates {
   outdated: Outdated[];
-  estimate: { estimatedUsd: number | null; modelCalls: number } | null;
+  /** Updates already written for the current evidence, waiting for the owner's review. */
+  waiting: Outdated[];
   tokens: { prompt: number; output: number; low: number; high: number; calibrated: boolean; basis: string };
   jobs: Job[];
   running: boolean;
@@ -49,20 +50,18 @@ export function GuideUpdates({ projectId }: { projectId: string }) {
     }
   };
   const recent = u.jobs.slice(0, 8);
-  const wikiCount = u.outdated.filter((o) => o.type === "wiki").length;
 
   return (
     <div className="card">
       <h2>Keeping the guide current</h2>
       {err && <div className="error">{err}</div>}
-      {u.outdated.length === 0 && !active && <p className="muted" style={{ margin: 0 }}>Everything written so far matches the captured evidence.</p>}
+      {u.outdated.length === 0 && !u.waiting.length && !active && <p className="muted" style={{ margin: 0 }}>Everything written so far matches the captured evidence.</p>}
       {u.outdated.length > 0 && (
         <>
           <p className="muted" style={{ marginTop: 0 }}>
-            {u.outdated.length} written {u.outdated.length === 1 ? "item is" : "items are"} behind the evidence. Updating rewrites only these, with <b>{u.settings.model ?? "your default model"}</b>
-: {tokenRange(u.tokens.low, u.tokens.high)} in total
-            {u.estimate?.estimatedUsd != null ? ` (API-equivalent about $${(u.estimate.estimatedUsd + wikiCount * 0.006).toFixed(2)})` : ""}.
-            {u.outdated.some((o) => o.userEdited) && " Items you edited keep your version; their update waits for your choice."}
+            {u.outdated.length} written {u.outdated.length === 1 ? "item is" : "items are"} behind the evidence. Updating keeps every statement whose evidence did not change
+            and sends only what changed, with <b>{u.settings.model ?? "your default model"}</b>: {tokenRange(u.tokens.low, u.tokens.high)} in total.
+            Each update waits for your review before it is applied.
           </p>
           <div className="notes-list">
             {u.outdated.slice(0, 8).map((o) => (
@@ -80,6 +79,17 @@ export function GuideUpdates({ projectId }: { projectId: string }) {
             {u.settings.maxUsdPerRun != null && <span className="faint small">Stops before ${u.settings.maxUsdPerRun} of usage.</span>}
           </div>
         </>
+      )}
+      {u.waiting.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <span className="faint small">Waiting for your review (open each to apply or keep the current version)</span>
+          {u.waiting.slice(0, 8).map((o) => (
+            <div key={`w:${o.type}:${o.key}`} className="note-row">
+              <Badge tone="warn">{o.type === "step" ? "Step" : "Page"}</Badge>
+              <span className="small" style={{ flex: 1 }}>{o.title}</span>
+            </div>
+          ))}
+        </div>
       )}
       {recent.length > 0 && (
         <div style={{ marginTop: 12 }}>

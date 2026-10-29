@@ -17,11 +17,15 @@ import type { Depth } from "./packet.ts";
 
 export const PROMPT_VERSION = 2;
 
-export const ClaimKind = z.enum(["observed", "inferred", "agent_stated", "background"]);
+export const ClaimKind = z.enum(["observed", "inferred", "agent_stated", "owner_stated", "background"]);
 export const Claim = z.object({
   text: z.string().min(1),
   kind: ClaimKind,
   evidence: z.array(z.string()),
+  /** Set when the project owner rewrote this statement; their words are not checked against evidence. */
+  edited: z.boolean().optional(),
+  /** Set when the project owner marked this statement incorrect. It stays visible, struck through. */
+  flagged: z.literal("incorrect").optional(),
 });
 export type Claim = z.infer<typeof Claim>;
 
@@ -53,7 +57,7 @@ const claimJson = {
   type: "object",
   properties: {
     text: { type: "string" },
-    kind: { type: "string", enum: ["observed", "inferred", "agent_stated", "background"] },
+    kind: { type: "string", enum: ["observed", "inferred", "agent_stated", "owner_stated", "background"] },
     evidence: { type: "array", items: { type: "string", pattern: "^E[0-9]+$" } },
   },
   required: ["text", "kind", "evidence"],
@@ -105,6 +109,7 @@ Write the step as claims. Every claim has a kind:
 - "observed": directly shown by the evidence you cite. Cite every item it relies on.
 - "inferred": a conclusion drawn from several cited items that the evidence does not state outright (for example, that a change was made to fix an earlier failure). Cite the items.
 - "agent_stated": what the AI said about its own reasoning, from AGENT NOTE or AI RESPONSE items. Cite them. It is the AI's account, not proof.
+- "owner_stated": context from the project owner, from OWNER NOTE items. Cite them. It is the owner's account: it can explain intent the capture could not see, but it is not a record of events.
 - "background": general knowledge that helps the reader understand (how a technique, API or concept works). Not a claim about what happened in this project; cite nothing or the item it explains.
 
 Rules:
@@ -116,6 +121,7 @@ Rules:
 - Dena lists the changed files and the test results itself, so do not write those lists. Explain them instead: what the change does and why it works.
 - "decisions": only choices the evidence shows were made. If alternatives were weighed, cite where. If none are shown, leave it empty.
 - "uncertainty": gaps in capture, ambiguous authorship, missing reasons, truncated evidence.
+- OWNER NOTE items marked "the owner says this statement was incorrect" tell you what not to repeat; do not restate it unless new evidence shows it.
 - Prefer clear, plain sentences to jargon; define terms in "concepts".
 - Cite evidence by its reference, e.g. ["E3", "E7"]. Use only references that exist in the evidence you were given. Every claim except "background" needs at least one reference. Only cite an AGENT NOTE or AI RESPONSE for "agent_stated" claims.
 

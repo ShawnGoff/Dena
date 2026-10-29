@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Overview as O } from "../api";
 import { Badge, EventRow, Loading } from "../components/Bits";
 import { SOURCE_LABEL, when } from "../format";
+import { GuideUpdates } from "../components/GuideUpdates";
 
 export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId: string; refresh: number; onEvent: (id: number) => void; onEpisode: (id: string) => void }) {
   const [o, setO] = useState<O | null>(null);
@@ -31,6 +32,8 @@ export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId
         <div className="card stat"><b>{count("git_commit")}</b><span>commits · {count("test_result")} test runs</span></div>
         <div className="card stat"><b>{o.episodes.explained}<span className="faint" style={{ fontSize: 16 }}> / {o.episodes.total}</span></b><span>episodes explained</span></div>
       </div>
+      <div className="section-gap" />
+      <GuideUpdates projectId={projectId} />
       <div className="section-gap" />
       <div className="grid cols-2">
         <div className="card">

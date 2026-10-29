@@ -28,7 +28,7 @@ const FAIL = /\b(fail(s|ed|ing|ure)?|broke|red)\b/i;
 export function validateStep(step: Step, packet: Packet, opts: { depth?: "concise" | "thorough" } = {}): Validation {
   const issues: Issue[] = [];
   const items = new Map(packet.items.map((i) => [i.ref, i]));
-  const counts = { observed: 0, inferred: 0, agent_stated: 0, background: 0 };
+  const counts = { observed: 0, inferred: 0, agent_stated: 0, owner_stated: 0, background: 0 };
   let specific = 0, wellCited = 0;
 
   for (const section of SECTIONS) {
@@ -46,6 +46,10 @@ export function validateStep(step: Step, packet: Packet, opts: { depth?: "concis
       }
       if (c.kind === "agent_stated" && cited.length && !cited.some((i) => i.kind === "agent_note" || i.kind === "ai_response"))
         issues.push({ severity: "error", section, claim: short, message: "agent_stated claim must cite an AGENT NOTE or AI RESPONSE" });
+      if (c.kind === "owner_stated" && cited.length && !cited.some((i) => i.kind === "owner_note"))
+        issues.push({ severity: "error", section, claim: short, message: "owner_stated claim must cite an OWNER NOTE" });
+      if ((c.kind === "observed" || c.kind === "inferred") && cited.length && cited.every((i) => i.kind === "owner_note"))
+        issues.push({ severity: "error", section, claim: short, message: "the owner's notes are not evidence of events; label this owner_stated" });
 
       // Test outcomes must agree with what was captured.
       const tests = cited.filter((i) => i.kind === "test");

@@ -5,6 +5,7 @@ import { buildPacket, renderPacket, type Depth, type Packet } from "./packet.ts"
 import type { Provider } from "./provider.ts";
 import { BATCH_JSON_SCHEMA, ModelStep, PROMPT_VERSION, STEP_JSON_SCHEMA, Step, batchPrompt, systemPrompt, userPrompt } from "./schema.ts";
 import { validateStep, type Validation } from "./validate.ts";
+import { recordGenerated } from "./revisions.ts";
 
 export interface Explanation {
   unitId: string;
@@ -57,6 +58,9 @@ function save(store: Store, projectId: string, x: Explanation, meta: { requested
     .run(projectId, x.unitId, x.packetHash, PROMPT_VERSION, x.step.generatedBy === "facts" ? "" : meta.requestedModel, x.model, meta.depth,
       x.step.generatedBy, x.attempts, x.batched ? 1 : 0, meta.inputChars, JSON.stringify(x.step).length,
       JSON.stringify(x.step), JSON.stringify(x.validation), JSON.stringify(x.evidence), x.costUsd, new Date().toISOString());
+  // Every new version also enters the step's revision history (and never overwrites the owner's edits).
+  recordGenerated(store, projectId, "step", x.unitId, x.step, { model: x.model, requestedModel: meta.requestedModel, depth: meta.depth,
+    evidence: x.evidence, validation: x.validation, costUsd: x.costUsd, attempts: x.attempts, batched: x.batched, packetHash: x.packetHash });
 }
 
 function assemble(model: ModelStep, packet: Packet): Step {

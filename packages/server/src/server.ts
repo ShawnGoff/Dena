@@ -5,7 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { displaySummary, effectiveTest, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, Recorder } from "@dena/adapters";
-import { buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
+import { cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
+  ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
+  RevisionConflict, saveUserEdit, Step, WikiSection, type DocType,
+  buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
 
 /**
  * Dena's local server: a JSON API over the store plus the built web UI.
@@ -62,6 +65,29 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
   const webDir = opts.webDir ?? DEFAULT_WEB_DIR;
   const recorders = new Map<string, Recorder>();
   const inFlight = new Map<string, Promise<unknown>>();
+
+  // Background updates: one runner per project; retries are scheduled, and queued work resumes after a restart.
+  const runners = new Map<string, Promise<void>>();
+  const timers = new Map<string, NodeJS.Timeout>();
+  const runUpdates = (projectId: string) => {
+    if (runners.has(projectId) || !store.getProject(projectId)) return;
+    clearTimeout(timers.get(projectId));
+    const job = (async () => {
+      try {
+        const r = await processDueJobs(store, projectId, getProvider(projectId), { log: (m) => log(`[updates] ${m}`) });
+        if (r.nextAt && !r.stoppedForBudget)
+          timers.set(projectId, setTimeout(() => runUpdates(projectId), Math.max(1_000, Date.parse(r.nextAt) - Date.now())));
+      } catch (e) {
+        log(`[updates] ${(e as Error).message}`);
+      } finally {
+        runners.delete(projectId);
+      }
+    })();
+    runners.set(projectId, job);
+  };
+  recoverJobs(store);
+  for (const p of store.listProjects())
+    if (store.db.prepare("SELECT 1 FROM update_job WHERE project_id = ? AND status = 'queued'").get(p.id)) setTimeout(() => runUpdates(p.id), 2_000);
   /** A provider per call, so each project's sign-in setting applies. */
   const getProvider = (projectId: string): Provider => {
     if (opts.provider) return opts.provider;
@@ -200,6 +226,79 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       }
     }
 
+    if (sub[0] === "updates") {
+      if (method === "GET") {
+        const outdated = findOutdated(store, p.id);
+        const steps = outdated.filter((o) => o.type === "step").map((o) => o.key);
+        return { outdated, estimate: steps.length ? estimate(store, p.id, steps, { force: true }) : null, jobs: listJobs(store, p.id, 30), running: runners.has(p.id),
+          settings: { model: store.projectSettings(p.id).model ?? null, maxUsdPerRun: store.projectSettings(p.id).maxUsdPerRun ?? null } };
+      }
+      if (method !== "POST") throw new HttpError(405, "Method not allowed");
+      if (sub[1] === "run") {
+        const outdated = findOutdated(store, p.id);
+        const wanted = Array.isArray(body?.items) ? outdated.filter((o) => body.items.some((i: any) => i?.type === o.type && i?.key === o.key)) : outdated;
+        const queued = enqueue(store, p.id, wanted.map((o) => ({ type: o.type, key: o.key })));
+        runUpdates(p.id);
+        return { queued };
+      }
+      if (sub[1] === "cancel") return { cancelled: cancelQueued(store, p.id) };
+      throw new HttpError(404, "Not found");
+    }
+
+    if (sub[0] === "export" && method === "GET") {
+      const r = exportGuideMarkdown(store, p.id);
+      return { filename: `${p.name.replace(/[^\w.-]+/g, "-")}-guide.md`, markdown: r.markdown, counts: r.counts };
+    }
+
+    if (sub[0] === "doc") {
+      const type = (method === "GET" ? url.searchParams.get("type") : body?.type) as DocType;
+      const key = String((method === "GET" ? url.searchParams.get("key") : body?.key) ?? "");
+      if (type !== "step" && type !== "wiki") throw new HttpError(400, "type is step or wiki");
+      const valid = type === "step" ? loadEpisodes(store, p.id).some((e) => e.id === key) : sectionKeys(store, p.id).some((s) => s.key === key);
+      if (!valid) throw new HttpError(404, "No such document");
+      const action = sub[1] ?? "";
+      if (method === "GET" && !action) {
+        const active = ensureDocRevision(store, p.id, type, key);
+        let stale = false;
+        if (active)
+          stale = type === "step"
+            ? buildPacket(store, p.id, key, { depth: active.meta.depth ?? store.projectSettings(p.id).depth }).hash !== active.meta.packetHash
+            : buildBrief(store, p.id, key as SectionKey).hash !== active.meta.inputHash;
+        const slim = (r: ReturnType<typeof activeRevision>) => r && { id: r.id, origin: r.origin, status: r.status, note: r.note, createdAt: r.createdAt, model: r.meta.model ?? null, userEdited: !!r.meta.userEdited };
+        return { active, proposed: proposedRevision(store, p.id, type, key), stale, history: revisions(store, p.id, type, key).map(slim), notes: notesFor(store, p.id, type, key, { all: true }) };
+      }
+      if (method === "GET" && action === "revision") {
+        const r = revisions(store, p.id, type, key).find((x) => x.id === Number(url.searchParams.get("id")));
+        if (!r) throw new HttpError(404, "No such revision");
+        return { revision: r };
+      }
+      if (method !== "POST") throw new HttpError(405, "Method not allowed");
+      try {
+        if (action === "edit") {
+          const parsed = (type === "step" ? Step : WikiSection).safeParse(body?.content);
+          if (!parsed.success) throw new HttpError(400, "The edited document is not in the expected shape");
+          const note = typeof body?.note === "string" ? body.note.slice(0, 500) : undefined;
+          return saveUserEdit(store, p.id, type, key, parsed.data, Number(body?.baseId), note);
+        }
+        if (action === "adopt") return adoptProposed(store, p.id, type, key, Number(body?.id));
+        if (action === "decline") return declineProposed(store, p.id, type, key, Number(body?.id)), { ok: true };
+        if (action === "restore") return restoreRevision(store, p.id, type, key, Number(body?.id));
+        if (action === "note") {
+          const kind = body?.kind;
+          if (!["context", "incorrect", "incomplete"].includes(kind)) throw new HttpError(400, "kind is context, incorrect or incomplete");
+          const text = String(body?.text ?? "").trim().slice(0, 2_000);
+          if (!text && kind === "context") throw new HttpError(400, "Write the context first");
+          return addNote(store, p.id, type, key, { kind, text, target: typeof body?.target === "string" ? body.target.slice(0, 500) : null });
+        }
+        if (action === "dismiss-note") return dismissNote(store, p.id, Number(body?.id)), { ok: true };
+      } catch (e) {
+        if (e instanceof RevisionConflict) throw new HttpError(409, e.message);
+        if (e instanceof HttpError) throw e;
+        throw new HttpError(400, (e as Error).message);
+      }
+      throw new HttpError(404, "Not found");
+    }
+
     if (sub[0] === "auth" && method === "GET") {
       if (opts.provider) return { found: true, loggedIn: true, method: "test", detail: "Test provider", auth: "account" };
       const auth = store.projectSettings(p.id).auth ?? "account";
@@ -335,6 +434,8 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     port,
     token,
     async close() {
+      for (const t of timers.values()) clearTimeout(t);
+      await Promise.allSettled(runners.values());
       for (const [id, r] of recorders) {
         recorders.delete(id);
         await r.stop();

@@ -8,3 +8,7 @@ export * from "./render.ts";
 export * from "./facts.ts";
 export * from "./memory.ts";
 export * from "./wiki.ts";
+export * from "./revisions.ts";
+export * from "./export.ts";
+export * from "./docs.ts";
+export * from "./updates.ts";

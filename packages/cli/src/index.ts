@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { correlate, displaySummary, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
-import { buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
+import { exportGuideMarkdown, buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
 import { startServer } from "@dena/server";
 
@@ -41,6 +41,7 @@ const USAGE = `dena <command>
   memory <project> [--rebuild]   project memory: components, problems and fixes, decisions, concepts, unknowns
   wiki <project> [section] [--model M] [--force] [--out FILE]
                                  list the wiki pages, or write one (overview, architecture, component:<folder>)
+  export <project> [--out FILE]  the whole guide as one Markdown file (current versions, with your edits)
   serve [--port N]               open Dena's interface in your browser (local only; the printed link carries a one-time key)
   config <project> [key value]   show or set: model (e.g. haiku, sonnet; "default" = your Claude Code default),
                                  depth (concise|thorough), max-usd (per batch run; "none" to clear),
@@ -318,6 +319,14 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         if (flag("out")) fs.writeFileSync(flag("out")!, md);
         else console.log(md);
         console.error(`· ${s.cached ? "cached" : `written in ${s.attempts} call${s.attempts > 1 ? "s" : ""}`}; ${s.validation.ok ? "passed checks" : "problems remain (shown on the page)"}`);
+        break;
+      }
+      case "export": {
+        const p = project(store, args[0]);
+        const r = exportGuideMarkdown(store, p.id);
+        const out = flag("out") ?? `${p.name}-guide.md`;
+        fs.writeFileSync(out, r.markdown);
+        console.log(`Wrote ${out}: ${r.counts.wikiPages} wiki pages, ${r.counts.steps} of ${r.counts.stepsTotal} episodes explained, plus problems, decisions, glossary and unknowns.`);
         break;
       }
       case "serve": {

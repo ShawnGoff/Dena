@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { correlate, Store, type IngestBatch, type NewEvent } from "@dena/core";
 import {
+  enqueue, exportGuideMarkdown, findOutdated, listJobs, processDueJobs,
+  activeRevision, addNote, adoptProposed, proposedRevision, restoreRevision, revisions, RevisionConflict, saveUserEdit,
   buildEpisodes, buildPacket, componentOf, ensureMemory, estimate, failingTests, loadMemory, explainEpisode, explainMany, rebuildEpisodes, renderPacket, renderStep, validateStep,
   type GenerateResult, type Provider, type Step,
 } from "../src/index.ts";
@@ -343,5 +345,132 @@ describe("project memory", () => {
   it("only rebuilds when something changed", () => {
     expect(ensureMemory(store, pid)).toBe(true);
     expect(ensureMemory(store, pid)).toBe(false);
+  });
+});
+
+describe("revisions and owner corrections", () => {
+  const ep = () => rebuildEpisodes(store, pid)[0]!.id;
+
+  it("records every generated version, and keeps the owner's edit when an AI update arrives", async () => {
+    const id = ep();
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]));
+    const first = activeRevision(store, pid, "step", id)!;
+    expect(first).toMatchObject({ origin: "generated", status: "active" });
+
+    const edited = structuredClone(first.content);
+    edited.summary = "My own summary.";
+    edited.whatHappened[0] = { ...edited.whatHappened[0], text: "Rewritten by me.", edited: true };
+    saveUserEdit(store, pid, "step", id, edited, first.id, "clarified");
+    expect(activeRevision(store, pid, "step", id)!.content.summary).toBe("My own summary.");
+
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]), { force: true });
+    expect(activeRevision(store, pid, "step", id)!.content.summary).toBe("My own summary."); // not overwritten
+    const proposal = proposedRevision(store, pid, "step", id)!;
+    expect(proposal.origin).toBe("generated");
+
+    adoptProposed(store, pid, "step", id, proposal.id);
+    expect(activeRevision(store, pid, "step", id)!.content.summary).not.toBe("My own summary.");
+    expect(revisions(store, pid, "step", id).some((r) => r.origin === "user")).toBe(true); // the edit stays in history
+  });
+
+  it("rejects an edit based on an outdated version, and restores any earlier version", async () => {
+    const id = ep();
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]));
+    const v1 = activeRevision(store, pid, "step", id)!;
+    saveUserEdit(store, pid, "step", id, { ...v1.content, summary: "A" }, v1.id);
+    expect(() => saveUserEdit(store, pid, "step", id, { ...v1.content, summary: "B" }, v1.id)).toThrow(RevisionConflict);
+    restoreRevision(store, pid, "step", id, v1.id);
+    const now = activeRevision(store, pid, "step", id)!;
+    expect(now).toMatchObject({ origin: "restored" });
+    expect(now.content.summary).toBe(v1.content.summary);
+  });
+
+  it("feeds owner notes to the writer as non-evidence, and checks how they are cited", async () => {
+    const id = ep();
+    addNote(store, pid, "step", id, { kind: "context", text: "We used split(',') on purpose for the first prototype." });
+    addNote(store, pid, "step", id, { kind: "incorrect", target: "The parser was rewritten twice.", text: "It was only rewritten once." });
+    const p = buildPacket(store, pid, id);
+    const notes = p.items.filter((i) => i.kind === "owner_note");
+    expect(notes).toHaveLength(2);
+    expect(notes[0]!.text).toContain("not a record of events");
+    expect(notes[1]!.text).toContain('says this statement was incorrect: "The parser was rewritten twice."');
+
+    const step = goodStep();
+    step.decisions.push(claim("The prototype used split on purpose.", "owner_stated", [notes[0]!.ref]));
+    step.whatHappened.push(claim("The prototype used split on purpose.", "observed", [notes[0]!.ref]));
+    const v = validateStep(step, p);
+    expect(v.issues.map((i) => i.message)).toContain("the owner's notes are not evidence of events; label this owner_stated");
+    expect(v.issues.filter((i) => i.message.includes("owner_stated claim must cite"))).toHaveLength(0);
+  });
+});
+
+describe("updates and export", () => {
+  const ep = () => rebuildEpisodes(store, pid)[0]!.id;
+  class Flaky implements Provider {
+    name = "flaky";
+    calls = 0;
+    constructor(private readonly failures: string[]) {}
+    async generate(): Promise<GenerateResult> {
+      const f = this.failures[this.calls++];
+      if (f) throw new Error(f);
+      return { json: goodStep(), model: "fake", costUsd: 0.01, durationMs: 1 };
+    }
+  }
+
+  it("finds only documents whose inputs changed", async () => {
+    const id = ep();
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]));
+    expect(findOutdated(store, pid)).toEqual([]);
+    addNote(store, pid, "step", id, { kind: "context", text: "Prototype only." });
+    expect(findOutdated(store, pid)).toMatchObject([{ type: "step", key: id, reason: "1 new note from you" }]);
+  });
+
+  it("retries a transient failure with backoff, then succeeds", async () => {
+    const id = ep();
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]));
+    addNote(store, pid, "step", id, { kind: "context", text: "x" });
+    expect(enqueue(store, pid, [{ type: "step", key: id }, { type: "step", key: id }])).toBe(1); // no duplicates
+    let clock = Date.now();
+    const flaky = new Flaky(["Claude is unavailable right now: overloaded"]);
+    const first = await processDueJobs(store, pid, flaky, { now: () => clock });
+    expect(first).toMatchObject({ done: 0, retrying: 1 });
+    expect(listJobs(store, pid)[0]).toMatchObject({ status: "queued", attempts: 1 });
+    clock += 11_000;
+    const second = await processDueJobs(store, pid, flaky, { now: () => clock });
+    expect(second.done).toBe(1);
+    expect(listJobs(store, pid)[0]).toMatchObject({ status: "done", result: "updated" });
+  });
+
+  it("does not retry sign-in problems, and keeps the owner's edits as a proposal", async () => {
+    const id = ep();
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]));
+    const v = activeRevision(store, pid, "step", id)!;
+    saveUserEdit(store, pid, "step", id, { ...v.content, summary: "Mine" }, v.id);
+    addNote(store, pid, "step", id, { kind: "context", text: "x" });
+    enqueue(store, pid, [{ type: "step", key: id }]);
+    const r = await processDueJobs(store, pid, new Flaky(["Claude Code is not signed in to your Claude account."]));
+    expect(r).toMatchObject({ failed: 1, retrying: 0 });
+    enqueue(store, pid, [{ type: "step", key: id }]);
+    await processDueJobs(store, pid, new Flaky([]));
+    expect(activeRevision(store, pid, "step", id)!.content.summary).toBe("Mine");
+    expect(listJobs(store, pid)[0]!.result).toContain("waiting as a proposal");
+  });
+
+  it("exports the current versions, marking the owner's edits and corrections", async () => {
+    const id = ep();
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]));
+    const v = activeRevision(store, pid, "step", id)!;
+    const content = structuredClone(v.content);
+    content.whatHappened[0] = { ...content.whatHappened[0], flagged: "incorrect" };
+    content.decisions[0] = { ...content.decisions[0], text: "We chose split(',') for the prototype.", edited: true };
+    saveUserEdit(store, pid, "step", id, content, v.id);
+    const { markdown, counts } = exportGuideMarkdown(store, pid, { generatedAt: "2026-10-29T00:00:00Z" });
+    expect(counts.steps).toBe(1);
+    expect(markdown).toContain("It can be wrong.");
+    expect(markdown).toContain("*(marked incorrect by the owner)*");
+    expect(markdown).toContain("We chose split(',') for the prototype. [");
+    expect(markdown).toContain("*(edited by the owner)*");
+    expect(markdown).toContain("## Problems and fixes");
+    expect(markdown).toMatch(/\[E\d+\]\(#ep1-e\d+\)/);
   });
 });

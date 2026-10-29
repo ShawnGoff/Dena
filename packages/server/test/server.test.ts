@@ -166,3 +166,28 @@ describe("memory API", () => {
     expect(m.concepts).toEqual([]);
   });
 });
+
+describe("document revisions API", () => {
+  it("edits with conflict detection, rejects malformed content, stores notes, and restores", async () => {
+    const [ep] = (await req(`/api/projects/${pid}/episodes`)).json;
+    await req(`/api/projects/${pid}/episodes/${ep.id}/explain`, { method: "POST", body: {} });
+    const q = `/api/projects/${pid}/doc?type=step&key=${ep.id}`;
+    const d = (await req(q)).json;
+    expect(d.active.origin).toBe("generated");
+
+    const content = { ...d.active.content, summary: "Owner's summary" };
+    const edited = await req(`/api/projects/${pid}/doc/edit`, { method: "POST", body: { type: "step", key: ep.id, content, baseId: d.active.id } });
+    expect(edited.json.origin).toBe("user");
+    const stale = await req(`/api/projects/${pid}/doc/edit`, { method: "POST", body: { type: "step", key: ep.id, content, baseId: d.active.id } });
+    expect(stale.status).toBe(409);
+    const bad = await req(`/api/projects/${pid}/doc/edit`, { method: "POST", body: { type: "step", key: ep.id, content: { title: 1 }, baseId: edited.json.id } });
+    expect(bad.status).toBe(400);
+
+    expect((await req(`/api/projects/${pid}/doc/note`, { method: "POST", body: { type: "step", key: ep.id, kind: "context", text: "It was a demo." } })).status).toBe(200);
+    const after = (await req(q)).json;
+    expect(after.notes[0]).toMatchObject({ kind: "context", text: "It was a demo." });
+    expect(after.stale).toBe(true); // a new note changes what the writer would see
+    await req(`/api/projects/${pid}/doc/restore`, { method: "POST", body: { type: "step", key: ep.id, id: d.active.id } });
+    expect((await req(q)).json.active.content.summary).toBe(d.active.content.summary);
+  });
+});

@@ -7,6 +7,7 @@ const BADGE: Record<Claim["kind"], string> = {
   observed: "✓ Observed",
   inferred: "~ Inferred",
   agent_stated: "💬 Agent said",
+  owner_stated: "🗣 You said",
   background: "📘 Background",
 };
 

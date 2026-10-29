@@ -320,6 +320,64 @@ CREATE TABLE wiki_section (
 CREATE INDEX wiki_section_key ON wiki_section(project_id, key, id);
 `,
   },
+  {
+    version: 10,
+    name: "revisions_and_notes",
+    sql: `
+-- Every version of a guide document (an episode's step, or a wiki page), append-only.
+-- "active": the version shown. "proposed": an AI update that arrived while the active version
+-- holds the owner's edits; it waits for the owner instead of overwriting them.
+CREATE TABLE doc_revision (
+  id           INTEGER PRIMARY KEY,
+  project_id   TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  doc_type     TEXT NOT NULL CHECK (doc_type IN ('step', 'wiki')),
+  doc_key      TEXT NOT NULL,
+  origin       TEXT NOT NULL CHECK (origin IN ('generated', 'user', 'restored')),
+  status       TEXT NOT NULL CHECK (status IN ('active', 'proposed', 'superseded', 'declined')),
+  content_json TEXT NOT NULL,
+  meta_json    TEXT NOT NULL DEFAULT '{}',
+  base_id      INTEGER,
+  note         TEXT,
+  created_at   TEXT NOT NULL
+);
+CREATE INDEX doc_revision_doc ON doc_revision(project_id, doc_type, doc_key, id);
+
+-- The owner's corrections and context, kept apart from captured events and from generated text.
+CREATE TABLE doc_note (
+  id         INTEGER PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  doc_type   TEXT NOT NULL,
+  doc_key    TEXT NOT NULL,
+  kind       TEXT NOT NULL CHECK (kind IN ('context', 'incorrect', 'incomplete')),
+  target     TEXT,
+  text       TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'dismissed')),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX doc_note_doc ON doc_note(project_id, doc_type, doc_key);
+`,
+  },
+  {
+    version: 11,
+    name: "update_jobs",
+    // Background regeneration of outdated guide documents. Stored so a restart resumes the queue.
+    sql: `
+CREATE TABLE update_job (
+  id          INTEGER PRIMARY KEY,
+  project_id  TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  doc_type    TEXT NOT NULL CHECK (doc_type IN ('step', 'wiki')),
+  doc_key     TEXT NOT NULL,
+  status      TEXT NOT NULL CHECK (status IN ('queued', 'running', 'done', 'failed', 'cancelled')),
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  next_at     TEXT NOT NULL,
+  last_error  TEXT,
+  result      TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX update_job_queue ON update_job(project_id, status, next_at);
+`,
+  },
 ];
 
 export function migrate(db: Database.Database): number {

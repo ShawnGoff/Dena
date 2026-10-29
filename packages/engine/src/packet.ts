@@ -1,5 +1,6 @@
 import { effectiveTest, redactText, sha256, type StoredEvent, type Store } from "@dena/core";
 import { episodeEvents } from "./episodes.ts";
+import { notesFor } from "./revisions.ts";
 
 /**
  * Evidence packets: the smallest useful, bounded, redacted view of one episode that a model
@@ -13,7 +14,7 @@ import { episodeEvents } from "./episodes.ts";
 
 export type EvidenceKind =
   | "prompt" | "ai_response" | "agent_note" | "command" | "test" | "file_change" | "commit"
-  | "error" | "reads" | "branch" | "session" | "gap";
+  | "error" | "reads" | "branch" | "session" | "gap" | "owner_note";
 
 export interface EvidenceItem {
   ref: string;
@@ -200,13 +201,21 @@ export function buildPacket(store: Store, projectId: string, unitId: string, opt
     }
   }
 
+  // The owner's corrections and context. They are not events: they explain intent the capture
+  // could not see, and tell the writer which earlier statements were wrong.
+  for (const n of notesFor(store, projectId, "step", unitId)) {
+    const text = n.kind === "context" ? `OWNER NOTE (context from the project owner; not a record of events):\n${n.text}`
+      : `OWNER NOTE: the owner says this statement was ${n.kind}: "${n.target ?? ""}"${n.text ? `\nTheir note: ${n.text}` : ""}`;
+    items.push({ kind: "owner_note", eventIds: [], at: events[events.length - 1]?.occurredAt ?? n.createdAt, facts: { noteId: n.id, noteKind: n.kind }, text });
+  }
+
   items.sort((a, b) => a.at.localeCompare(b.at));
   foldRepeatedTests(items);
   // Enforce the total budget from the end of the episode backwards: the opening prompt matters most.
   let total = 0;
   const kept = items.filter((it) => {
     total += it.text.length;
-    if (total > BUDGET.total && it.kind !== "prompt" && it.kind !== "test" && it.kind !== "commit" && it.kind !== "agent_note") {
+    if (total > BUDGET.total && !["prompt", "test", "commit", "agent_note", "owner_note"].includes(it.kind)) {
       truncated = true;
       return false;
     }

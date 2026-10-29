@@ -108,11 +108,13 @@ export interface EventDetail {
   artifacts: { role: string; artifactType: string; uriOrPath: string | null; sizeBytes: number; content: string | null; truncated: boolean }[];
 }
 
-export type ClaimKind = "observed" | "inferred" | "agent_stated" | "background";
+export type ClaimKind = "observed" | "inferred" | "agent_stated" | "owner_stated" | "background";
 export interface Claim {
   text: string;
   kind: ClaimKind;
   evidence: string[];
+  edited?: boolean;
+  flagged?: "incorrect";
 }
 export interface Step {
   title: string;

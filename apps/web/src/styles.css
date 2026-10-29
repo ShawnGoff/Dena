@@ -280,3 +280,25 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .source { display: grid; grid-template-columns: 40px 1fr; gap: 8px; padding: 8px 10px; border-radius: 8px; font-size: 13.5px; line-height: 1.6; border: 1px solid transparent; }
 .source.focused { background: var(--accent-soft); border-color: rgba(139, 156, 255, 0.35); }
 .side-label + .toc-item, .toc .side-label { margin-top: 4px; }
+
+/* Corrections and revisions */
+.badge.you { background: rgba(94, 214, 214, 0.12); color: #6fe0e0; }
+.claim { position: relative; }
+.claim.flagged .claim-body { text-decoration: line-through; text-decoration-color: var(--bad); color: var(--text-dim); }
+.claim-actions { display: none; margin-left: 8px; gap: 4px; }
+.claim:hover .claim-actions, .claim:focus-within .claim-actions { display: inline-flex; }
+.claim-actions button { font-size: 11.5px; border: 1px solid var(--line-strong); background: var(--bg-sunken); color: var(--text-dim); border-radius: 6px; padding: 0 7px; cursor: pointer; }
+.claim-actions button:hover { color: var(--text); border-color: var(--accent); }
+.claim-edit { display: grid; gap: 6px; margin-top: 4px; }
+.claim-edit textarea, .context-box textarea { width: 100%; background: var(--bg-sunken); color: var(--text); border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 14px; resize: vertical; }
+.row { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.docbar { display: grid; gap: 10px; margin: 0 0 16px; }
+.notice.proposal { display: grid; gap: 8px; }
+.context-box { display: grid; gap: 6px; padding: 12px 14px; border: 1px dashed var(--line-strong); border-radius: 10px; }
+.notes-list { display: grid; gap: 6px; }
+.note-row { display: flex; gap: 8px; align-items: flex-start; }
+.note-row .close { margin-left: auto; }
+.linkish { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; font-size: 12.5px; justify-self: start; }
+.history { display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: var(--bg-raised); }
+.history-row { display: flex; gap: 10px; align-items: center; padding: 4px 6px; flex-wrap: wrap; }
+.history-row.active { background: var(--accent-soft); border-radius: 6px; }

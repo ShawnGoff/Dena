@@ -4,6 +4,7 @@ import { ensureMemory, latestExplanations, loadMemory, type LatestExplanation, t
 import type { Provider } from "./provider.ts";
 import { Claim, ClaimKind } from "./schema.ts";
 import { z } from "zod";
+import { recordGenerated } from "./revisions.ts";
 
 /**
  * L3 wiki sections: the readable pages of the guide (an overview, the architecture, one page per
@@ -179,7 +180,7 @@ const claimJson = {
   type: "object",
   properties: {
     text: { type: "string" },
-    kind: { type: "string", enum: ["observed", "inferred", "agent_stated", "background"] },
+    kind: { type: "string", enum: ["observed", "inferred", "agent_stated", "owner_stated", "background"] },
     evidence: { type: "array", items: { type: "string", pattern: "^S[0-9]+$" } },
   },
   required: ["text", "kind", "evidence"],
@@ -234,7 +235,7 @@ export interface WikiValidation {
 export function validateSection(s: WikiSection, brief: Brief): WikiValidation {
   const issues: WikiValidation["issues"] = [];
   const by = new Map(brief.sources.map((x) => [x.ref, x]));
-  const counts = { observed: 0, inferred: 0, agent_stated: 0, background: 0 };
+  const counts = { observed: 0, inferred: 0, agent_stated: 0, owner_stated: 0, background: 0 };
   let specific = 0, grounded = 0;
   for (const sec of s.sections)
     for (const c of sec.claims) {
@@ -317,12 +318,13 @@ export async function generateSection(store: Store, projectId: string, key: Sect
     .prepare(`INSERT OR REPLACE INTO wiki_section (project_id, key, input_hash, prompt_version, requested_model, model, attempts, content_json, validation_json, sources_json, cost_usd, created_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(projectId, key, brief.hash, WIKI_PROMPT_VERSION, model, res.model, attempts, JSON.stringify(section), JSON.stringify(validation), JSON.stringify(brief.sources), cost, new Date().toISOString());
+  recordGenerated(store, projectId, "wiki", key, section, { model: res.model, requestedModel: model, sources: brief.sources, validation, costUsd: cost, attempts, inputHash: brief.hash });
   return { key, section, validation, sources: brief.sources, model: res.model, requestedModel: model, costUsd: cost, attempts, createdAt: new Date().toISOString(), stale: false, cached: false };
 }
 
 /** Markdown for one wiki page; the structured section stays the source of truth. */
 export function renderWikiMarkdown(s: StoredSection): string {
-  const badge: Record<string, string> = { observed: "✓ Observed", inferred: "~ Inferred", agent_stated: "💬 Agent said", background: "📘 Background" };
+  const badge: Record<string, string> = { observed: "✓ Observed", inferred: "~ Inferred", agent_stated: "💬 Agent said", owner_stated: "🗣 You said", background: "📘 Background" };
   const by = new Map(s.sources.map((x) => [x.ref, x]));
   return [
     `# ${s.section.title}`, "",

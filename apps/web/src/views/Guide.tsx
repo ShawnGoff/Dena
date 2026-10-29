@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Episode, type ExplanationInfo } from "../api";
+import { api, type Claim, type Episode, type ExplanationInfo, type Step, type StoredExplanation } from "../api";
+import { DocBar, type DocResponse } from "../components/DocBar";
 import { Badge, Loading } from "../components/Bits";
 import { StepView } from "../components/StepView";
 import { when } from "../format";
@@ -52,14 +53,23 @@ export function Guide({ projectId, openEpisode, onEpisode, onEvent }: {
 
 function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: string; ep: Episode; onEvent: (id: number) => void; onExplained: () => void }) {
   const [info, setInfo] = useState<ExplanationInfo | null>(null);
-  const [which, setWhich] = useState(0);
+  const [doc, setDoc] = useState<DocResponse<Step> | null>(null);
+  const [viewing, setViewing] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const load = useCallback(() => api<ExplanationInfo>(`projects/${projectId}/episodes/${ep.id}/explanation`).then((i) => {
-    setInfo(i);
-    setWhich(0);
-  }, (e) => setErr(String(e.message))), [projectId, ep.id]);
+  const load = useCallback(async () => {
+    try {
+      const [i, d] = await Promise.all([
+        api<ExplanationInfo>(`projects/${projectId}/episodes/${ep.id}/explanation`),
+        api<DocResponse<Step>>(`projects/${projectId}/doc?type=step&key=${encodeURIComponent(ep.id)}`),
+      ]);
+      setInfo(i);
+      setDoc(d);
+    } catch (e) {
+      setErr(String((e as Error).message));
+    }
+  }, [projectId, ep.id]);
   useEffect(() => {
     load();
   }, [load]);
@@ -70,6 +80,7 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
     try {
       await api(`projects/${projectId}/episodes/${ep.id}/explain`, { method: "POST", body: { model, force } });
       onExplained();
+      setViewing(null);
       await load();
     } catch (e) {
       setErr((e as Error).message);
@@ -77,13 +88,29 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
       setBusy(null);
     }
   };
+  const saveEdit = async (next: Step, note: string) => {
+    if (!doc?.active) return;
+    try {
+      await api(`projects/${projectId}/doc/edit`, { method: "POST", body: { type: "step", key: ep.id, content: next, baseId: doc.active.id, note } });
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+    await load();
+  };
+  const markIncorrect = (c: Claim, note: string) =>
+    api(`projects/${projectId}/doc/note`, { method: "POST", body: { type: "step", key: ep.id, kind: "incorrect", target: c.text, text: note } }).catch((e) => setErr(String(e.message)));
 
-  if (!info) return err ? <div className="error">{err}</div> : <Loading />;
-  const x = info.explanations[which];
+  if (!info || !doc) return err ? <div className="error">{err}</div> : <Loading />;
   const est = info.estimate;
   const modelName = info.settings.model ?? "your default model";
   const cost = est.estimatedUsd !== null ? `about $${est.estimatedUsd.toFixed(3)} est. usage` : "usage estimate not available yet";
   const s = ep.stats;
+  // What to show: an older or proposed version the reader chose to look at, else the active one.
+  const shownRev = viewing != null
+    ? (doc.proposed?.id === viewing ? doc.proposed : null)
+    : doc.active;
+  const historical = viewing != null && !shownRev;
+  const x = shownRev ? toExplanation(shownRev, doc.stale && shownRev === doc.active) : null;
 
   return (
     <div className="page" style={{ maxWidth: 820 }}>
@@ -98,7 +125,7 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
       </div>
       {err && <div className="error">{err}</div>}
 
-      {!x && (
+      {!doc.active && (
         <div className="explain-card">
           <h2 className="step-title" style={{ marginTop: 0 }}>{ep.title}</h2>
           {est.factsOnly ? (
@@ -110,33 +137,49 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
         </div>
       )}
 
-      {x && (
+      {doc.active && (
         <>
-          {info.explanations.length > 1 && (
-            <div className="versions">
-              {info.explanations.map((v, i) => (
-                <button key={i} className={`tab ${i === which ? "active" : ""}`} onClick={() => setWhich(i)}>
-                  {v.step.generatedBy === "facts" ? "Facts" : v.model ?? v.requestedModel}{v.stale ? " · outdated" : ""}
-                </button>
-              ))}
+          <DocBar projectId={projectId} type="step" docKey={ep.id} doc={doc} onChanged={load} viewing={viewing} onView={setViewing} allowContext />
+          {doc.stale && !viewing && (
+            <div className="notice" style={{ marginBottom: 14 }}>
+              New evidence{doc.notes.some((n) => n.status === "open") ? " or your notes" : ""} arrived since this was written.{" "}
+              <button className="btn primary" disabled={!!busy} onClick={() => explain(undefined, true)}>{busy === "default" ? "Updating…" : "Update with new evidence"}</button>
+              {doc.active.meta.userEdited && <span className="faint small"> Your edits are kept; the update will wait for your choice.</span>}
             </div>
           )}
-          <StepView x={x} onRef={onEvent} />
-          {x.step.generatedBy !== "facts" && (
+          {historical && <HistoricalVersion projectId={projectId} docKey={ep.id} id={viewing!} onRef={onEvent} />}
+          {x && <StepView x={x} onRef={onEvent} editable={!viewing} onChange={saveEdit} onMarkIncorrect={markIncorrect} />}
+          {!viewing && x?.step.generatedBy !== "facts" && (
             <div className="explain-more">
-              <span className="muted">Want a more precise explanation? Stronger models cost more usage.</span>
+              <span className="muted">Want a more precise explanation? Stronger models use more of your plan.</span>
               {STRONGER.map((m) => (
                 <button key={m.model} className="btn" disabled={!!busy} onClick={() => explain(m.model, true)}>
                   {busy === m.model ? `Explaining with ${m.label}…` : `Explain with ${m.label}`}
                 </button>
               ))}
-              {x.stale && <button className="btn primary" disabled={!!busy} onClick={() => explain(undefined, true)}>{busy === "default" ? "Explaining…" : "Update with new evidence"}</button>}
             </div>
           )}
         </>
       )}
     </div>
   );
+}
+
+/** Shapes a stored revision like an explanation, so the step view can render either. */
+function toExplanation(r: { content: Step; meta: Record<string, any>; createdAt: string }, stale: boolean): StoredExplanation {
+  const m = r.meta;
+  return { unitId: "", step: r.content, validation: m.validation, evidence: m.evidence ?? {}, model: m.model ?? null, requestedModel: m.requestedModel ?? "",
+    costUsd: m.costUsd ?? null, attempts: m.attempts ?? 1, batched: !!m.batched, depth: m.depth ?? "thorough", createdAt: r.createdAt, stale };
+}
+
+/** Read-only view of an older revision picked from the history. */
+function HistoricalVersion({ projectId, docKey, id, onRef }: { projectId: string; docKey: string; id: number; onRef: (id: number) => void }) {
+  const [rev, setRev] = useState<{ content: Step; meta: Record<string, any>; createdAt: string } | null>(null);
+  useEffect(() => {
+    api<{ revision: { content: Step; meta: Record<string, any>; createdAt: string } }>(`projects/${projectId}/doc/revision?type=step&key=${encodeURIComponent(docKey)}&id=${id}`)
+      .then((r) => setRev(r.revision), () => setRev(null));
+  }, [projectId, docKey, id]);
+  return rev ? <StepView x={toExplanation(rev, false)} onRef={onRef} /> : <Loading />;
 }
 
 /** Which model writes new explanations, and how deep they go. Saved per project. */

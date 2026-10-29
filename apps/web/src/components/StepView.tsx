@@ -1,20 +1,25 @@
 import type { Claim, ClaimKind, StoredExplanation } from "../api";
+import { ClaimList, KIND } from "./ClaimList";
 
-export const KIND: Record<ClaimKind, { label: string; tone: string; help: string }> = {
-  observed: { label: "Observed", tone: "ok", help: "Shown directly by the cited evidence" },
-  inferred: { label: "Inferred", tone: "warn", help: "A reasonable conclusion from the evidence, not shown directly" },
-  agent_stated: { label: "Agent said", tone: "accent", help: "The AI's own account of its reasoning; not verified" },
-  background: { label: "Background", tone: "muted", help: "General knowledge to help you understand; not a claim about this project" },
-};
+export { KIND };
+
+type ClaimSection = "whatHappened" | "whyItMattered" | "howItWorks" | "whatChanged" | "decisions" | "verification";
 
 /**
  * Renders one explained step from its structured form. Every claim shows its kind, and every
- * evidence reference opens the events behind it.
+ * evidence reference opens the events behind it. When editable, statements can be rewritten,
+ * marked incorrect or removed; each change is saved as a new revision by the caller.
  */
-export function StepView({ x, onRef }: { x: StoredExplanation; onRef: (eventId: number) => void }) {
+export function StepView({ x, onRef, editable, onChange, onMarkIncorrect }: {
+  x: StoredExplanation;
+  onRef: (eventId: number) => void;
+  editable?: boolean;
+  onChange?: (next: StoredExplanation["step"], note: string) => void;
+  onMarkIncorrect?: (claim: Claim, note: string) => void;
+}) {
   const s = x.step;
   const flagged = new Set(x.validation.issues.filter((i) => i.severity === "error" && i.claim).map((i) => i.claim!));
-  const refBtn = (ref: string) => {
+  const refs = (c: Claim) => c.evidence.map((ref) => {
     const ev = x.evidence[ref];
     return (
       <button key={ref} className="ref" disabled={!ev?.eventIds.length} title={ev ? `${ev.kind} · open the evidence` : "Not in the evidence"}
@@ -22,23 +27,25 @@ export function StepView({ x, onRef }: { x: StoredExplanation; onRef: (eventId: 
         {ref}
       </button>
     );
+  });
+  const change = (section: ClaimSection, i: number, next: Claim | null) => {
+    const list = [...s[section]];
+    const before = list[i]!;
+    if (next) list[i] = next;
+    else list.splice(i, 1);
+    onChange?.({ ...s, [section]: list }, next ? (next.text !== before.text ? "Edited a statement" : "Changed a statement's mark") : `Removed: “${before.text.slice(0, 80)}”`);
   };
-  const claims = (title: string, list: Claim[], note?: string) =>
-    list.length > 0 && (
+  const claims = (title: string, section: ClaimSection, note?: string) =>
+    s[section].length > 0 && (
       <section className="step-section">
         <h3>{title}{note && <span className="faint"> · {note}</span>}</h3>
-        <ul className="claims">
-          {list.map((c, i) => (
-            <li key={i} className={`claim ${c.kind}`}>
-              <span className={`badge ${KIND[c.kind].tone}`} title={KIND[c.kind].help}>{KIND[c.kind].label}</span>
-              <span className="claim-text">
-                {c.text}
-                {c.evidence.length > 0 && <span className="refs">{c.evidence.map(refBtn)}</span>}
-                {flagged.has(c.text.slice(0, 80)) && <span className="badge bad" style={{ marginLeft: 6 }} title="Failed an automatic check; see Checks below">check failed</span>}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <ClaimList claims={s[section]} refs={refs} flaggedByChecks={flagged} editable={editable}
+          onEdit={(i, next) => change(section, i, next)}
+          onMarkIncorrect={(i, n) => {
+            const c = s[section][i]!;
+            onMarkIncorrect?.(c, n);
+            change(section, i, { ...c, flagged: "incorrect" });
+          }} />
       </section>
     );
 
@@ -48,16 +55,15 @@ export function StepView({ x, onRef }: { x: StoredExplanation; onRef: (eventId: 
       <div className="ai-notice">
         <b>Written by AI from captured evidence. It can be wrong.</b> Each statement is labeled{" "}
         {(Object.keys(KIND) as ClaimKind[]).map((k) => <span key={k} className={`badge ${KIND[k].tone}`} title={KIND[k].help} style={{ marginRight: 4 }}>{KIND[k].label}</span>)}
-        and the <span className="ref static">E3</span> buttons open the events behind it.
+        and the <span className="ref static">E3</span> buttons open the events behind it.{editable && " Hover a statement to edit it, mark it incorrect, or remove it."}
       </div>
-      {x.stale && <div className="notice" style={{ marginBottom: 14 }}>New evidence has been captured for this episode since this was written. Explain again to include it.</div>}
       <p className="step-summary">{s.summary}</p>
-      {claims("What happened", s.whatHappened)}
-      {claims("Why it mattered", s.whyItMattered)}
-      {claims("How it works", s.howItWorks)}
-      {claims("What changed", s.whatChanged, "from captured facts")}
-      {claims("Decisions", s.decisions)}
-      {claims("Verification", s.verification, "from captured test runs")}
+      {claims("What happened", "whatHappened")}
+      {claims("Why it mattered", "whyItMattered")}
+      {claims("How it works", "howItWorks")}
+      {claims("What changed", "whatChanged", "from captured facts")}
+      {claims("Decisions", "decisions")}
+      {claims("Verification", "verification", "from captured test runs")}
       {s.generatedBy !== "facts" && s.verification.length === 0 && (
         <section className="step-section"><h3>Verification</h3><p className="muted">No test runs were captured for this work.</p></section>
       )}
@@ -83,7 +89,7 @@ export function StepView({ x, onRef }: { x: StoredExplanation; onRef: (eventId: 
               <li key={i}><span className={`badge ${p.severity === "error" ? "bad" : "warn"}`}>{p.severity === "error" ? "failed" : "note"}</span> {p.section}{p.claim ? ` — “${p.claim}…”` : ""}: {p.message}</li>
             ))}
           </ul>
-          <p className="faint" style={{ fontSize: 12.5 }}>Automatic checks catch known kinds of mistakes. Passing them does not mean every sentence is correct.</p>
+          <p className="faint" style={{ fontSize: 12.5 }}>Automatic checks catch known kinds of mistakes. Passing them does not mean every sentence is correct. Statements you edited are not checked.</p>
         </section>
       )}
       <footer className="step-foot">

@@ -2,11 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Badge, Loading } from "../components/Bits";
 import { KIND } from "../components/StepView";
+import { ClaimList } from "../components/ClaimList";
+import { DocBar, type DocResponse } from "../components/DocBar";
 import { when } from "../format";
 
 interface PageInfo { key: string; title: string; sources: number; chars: number; generated: boolean; stale: boolean; model: string | null }
 interface Source { ref: string; type: "fact" | "claim"; grade: keyof typeof KIND; text: string; unitId: string | null; eventIds: number[] }
-interface Claim { text: string; kind: keyof typeof KIND; evidence: string[] }
+interface Claim { text: string; kind: keyof typeof KIND; evidence: string[]; edited?: boolean; flagged?: "incorrect" }
+type SectionContent = Stored["section"];
 interface Stored {
   section: { title: string; summary: string; sections: { heading: string; claims: Claim[] }[]; uncertainty: string[] };
   validation: { ok: boolean; issues: { severity: string; heading: string; claim?: string; message: string }[]; groundedShare: number };
@@ -53,6 +56,8 @@ export function Wiki({ projectId, page, onPage, onEvent, onEpisode, onMemory, on
         <div className="side-label" style={{ marginTop: 14 }}>Built from facts</div>
         <button className="toc-item" style={{ gridTemplateColumns: "1fr" }} onClick={onMemory}><span>Problems, decisions, concepts →</span></button>
         <button className="toc-item" style={{ gridTemplateColumns: "1fr" }} onClick={onWalkthrough}><span>Episode walkthrough →</span></button>
+        <div className="side-label" style={{ marginTop: 14 }}>Share</div>
+        <ExportButton projectId={projectId} />
       </nav>
       <div className="guide-main">
         <WikiPage key={current} projectId={projectId} pageKey={current} onEvent={onEvent} onEpisode={onEpisode} onWritten={loadPages} />
@@ -66,8 +71,30 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
+  const [doc, setDoc] = useState<DocResponse<SectionContent> | null>(null);
+  const [viewing, setViewing] = useState<number | null>(null);
+  const [older, setOlder] = useState<{ content: SectionContent; meta: Record<string, any>; createdAt: string } | null>(null);
   const q = `projects/${projectId}/wiki/section?key=${encodeURIComponent(pageKey)}`;
-  const load = useCallback(() => api<SectionResponse>(q).then(setR, (e) => setErr(String(e.message))), [q]);
+  const dq = `projects/${projectId}/doc?type=wiki&key=${encodeURIComponent(pageKey)}`;
+  const load = useCallback(() => Promise.all([api<SectionResponse>(q), api<DocResponse<SectionContent>>(dq)]).then(([a, b]) => {
+    setR(a);
+    setDoc(b);
+  }, (e) => setErr(String(e.message))), [q, dq]);
+  useEffect(() => {
+    setOlder(null);
+    if (viewing != null && viewing !== doc?.proposed?.id)
+      api<{ revision: { content: SectionContent; meta: Record<string, any>; createdAt: string } }>(`projects/${projectId}/doc/revision?type=wiki&key=${encodeURIComponent(pageKey)}&id=${viewing}`)
+        .then((x) => setOlder(x.revision), () => {});
+  }, [viewing, projectId, pageKey, doc?.proposed?.id]);
+  const saveEdit = async (next: SectionContent, note: string) => {
+    if (!doc?.active) return;
+    try {
+      await api(`projects/${projectId}/doc/edit`, { method: "POST", body: { type: "wiki", key: pageKey, content: next, baseId: doc.active.id, note } });
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+    await load();
+  };
   useEffect(() => {
     load();
   }, [load]);
@@ -77,6 +104,7 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
     setErr(null);
     try {
       await api(`projects/${projectId}/wiki/section`, { method: "POST", body: { key: pageKey, model, force } });
+      setViewing(null);
       await load();
       onWritten();
     } catch (e) {
@@ -90,21 +118,26 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
     document.getElementById(`src-${ref}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
   };
 
-  if (!r) return err ? <div className="error">{err}</div> : <Loading />;
-  const s = r.section;
+  if (!r || !doc) return err ? <div className="error">{err}</div> : <Loading />;
+  // Show the active revision (which may hold your edits), a proposed AI update, or an older version.
+  const rev = viewing == null ? doc.active : viewing === doc.proposed?.id ? doc.proposed : older;
+  const s: Stored | null = rev ? { section: rev.content, sources: rev.meta.sources ?? [], validation: rev.meta.validation, model: rev.meta.model ?? null,
+    costUsd: rev.meta.costUsd ?? null, attempts: rev.meta.attempts ?? 1, createdAt: rev.createdAt, stale: viewing == null && doc.stale } : null;
+  const editable = viewing == null && !!doc.active;
   const flagged = new Set(s?.validation.issues.filter((i) => i.severity === "error" && i.claim).map((i) => i.claim!) ?? []);
   const cited = s ? new Set(s.section.sections.flatMap((x) => x.claims.flatMap((c) => c.evidence))) : new Set<string>();
 
   return (
     <div className="page" style={{ maxWidth: 840 }}>
       {err && <div className="error">{err}</div>}
-      {!s && (
+      {!doc.active && (
         <div className="explain-card">
           <h2 className="step-title" style={{ marginTop: 0 }}>{LABEL(pageKey)}</h2>
           <p className="muted">Not written yet. Dena will send {r.brief.sources} sources (about {Math.round(r.brief.chars / 1000)}k characters: facts counted from events, and claims from explained episodes) to <b>{r.settings.model ?? "your default model"}</b>.</p>
           <button className="btn primary" disabled={!!busy} onClick={() => write()}>{busy ? "Writing… this can take a minute" : "Write this page"}</button>
         </div>
       )}
+      {doc.active && <DocBar projectId={projectId} type="wiki" docKey={pageKey} doc={doc} onChanged={load} viewing={viewing} onView={setViewing} allowContext={false} />}
       {s && (
         <article className="step">
           <h2 className="step-title">{s.section.title}</h2>
@@ -120,18 +153,18 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
           {s.section.sections.map((sec) => (
             <section key={sec.heading} className="step-section">
               <h3>{sec.heading}</h3>
-              <ul className="claims">
-                {sec.claims.map((c, i) => (
-                  <li key={i} className={`claim ${c.kind}`}>
-                    <span className={`badge ${KIND[c.kind].tone}`} title={KIND[c.kind].help}>{KIND[c.kind].label}</span>
-                    <span className="claim-text">
-                      {c.text}
-                      {c.evidence.length > 0 && <span className="refs">{c.evidence.map((ref) => <button key={ref} className="ref" onClick={() => goSource(ref)} title="Show this source">{ref}</button>)}</span>}
-                      {flagged.has(c.text.slice(0, 80)) && <span className="badge bad" style={{ marginLeft: 6 }}>check failed</span>}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <ClaimList claims={sec.claims} flaggedByChecks={flagged} editable={editable}
+                refs={(c) => c.evidence.map((ref) => <button key={ref} className="ref" onClick={() => goSource(ref)} title="Show this source">{ref}</button>)}
+                onEdit={(i, next) => {
+                  const sections = s.section.sections.map((x) => (x === sec ? { ...x, claims: next ? x.claims.map((c, j) => (j === i ? next : c)) : x.claims.filter((_, j) => j !== i) } : x));
+                  void saveEdit({ ...s.section, sections }, next ? "Edited a statement" : `Removed: “${sec.claims[i]!.text.slice(0, 80)}”`);
+                }}
+                onMarkIncorrect={(i, n) => {
+                  const c = sec.claims[i]!;
+                  void api(`projects/${projectId}/doc/note`, { method: "POST", body: { type: "wiki", key: pageKey, kind: "incorrect", target: c.text, text: n } });
+                  const sections = s.section.sections.map((x) => (x === sec ? { ...x, claims: x.claims.map((cc, j) => (j === i ? { ...cc, flagged: "incorrect" as const } : cc)) } : x));
+                  void saveEdit({ ...s.section, sections }, "Marked a statement incorrect");
+                }} />
             </section>
           ))}
           {s.section.uncertainty.length > 0 && (
@@ -164,6 +197,36 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
           </div>
         </article>
       )}
+    </div>
+  );
+}
+
+/** Downloads the whole guide as Markdown: current versions of every page and step, with your edits. */
+function ExportButton({ projectId }: { projectId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api<{ filename: string; markdown: string; counts: { wikiPages: number; steps: number; stepsTotal: number } }>(`projects/${projectId}/export`);
+      const url = URL.createObjectURL(new Blob([r.markdown], { type: "text/markdown;charset=utf-8" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = r.filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setMsg(`${r.counts.wikiPages} pages, ${r.counts.steps} of ${r.counts.stepsTotal} episodes`);
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ padding: "2px 8px" }}>
+      <button className="btn" disabled={busy} onClick={run}>{busy ? "Exporting…" : "Export guide (.md)"}</button>
+      {msg && <div className="faint small" style={{ marginTop: 4 }}>{msg}</div>}
     </div>
   );
 }

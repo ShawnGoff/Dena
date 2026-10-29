@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { StoredEvent, Store } from "@dena/core";
+import { effectiveTest, TEST_RULES_VERSION, type StoredEvent, type Store } from "@dena/core";
 import { loadEpisodes, rebuildEpisodes } from "./episodes.ts";
 import { Step, type Claim } from "./schema.ts";
 
@@ -116,7 +116,7 @@ function components(ctx: Ctx): MemoryEntity[] {
 
 function problems(ctx: Ctx): MemoryEntity[] {
   const out: MemoryEntity[] = [];
-  const tests = ctx.events.filter((e) => e.eventType === "test_result" && ((e.payload as any).outcome === "failed" || (e.payload as any).outcome === "passed"));
+  const tests = ctx.events.filter((e) => e.eventType === "test_result" && ["failed", "passed"].includes(effectiveTest(e).outcome ?? ""));
   let open: StoredEvent[] = [];
   const close = (fix: StoredEvent | null) => {
     if (!open.length) return;
@@ -134,17 +134,18 @@ function problems(ctx: Ctx): MemoryEntity[] {
       : undefined;
     const causes = ctx.events.filter((e) => e.eventType === "agent_note" && ["cause", "decision"].includes((e.payload as any).kind)
       && t(e.occurredAt) >= t(first.occurredAt) - 5 * 60_000 && t(e.occurredAt) <= (fix ? end : t(first.occurredAt) + 60 * 60_000));
-    const p = first.payload as Record<string, any>;
+    const ft = effectiveTest(first);
     const units = [...new Set([...open, ...(fix ? [fix] : [])].map((e) => ctx.unitOf.get(e.id)).filter(Boolean))] as string[];
     out.push({
       id: idFor("problem", `${first.source}|${first.sourceEventId}`), kind: "problem",
-      title: names[0] ? `Failing test: ${names[0]}` : `Tests failed (${p.testsFailed ?? "?"} of ${(p.testsPassed ?? 0) + (p.testsFailed ?? 0) || "?"})`,
+      title: names[0] ? `Failing test: ${names[0]}` : `Tests failed (${ft.failed ?? "?"} of ${(ft.passed ?? 0) + (ft.failed ?? 0) || "?"})`,
       sortKey: t(first.occurredAt),
       data: {
         status: fix ? "fixed" : "open",
         failedRuns: open.length, firstFailedAt: first.occurredAt, fixedAt: fix?.occurredAt ?? null,
-        failingTests: names, failedCount: p.testsFailed ?? null,
-        fixCounts: fix ? { passed: (fix.payload as any).testsPassed ?? null, failed: (fix.payload as any).testsFailed ?? 0 } : null,
+        failingTests: names, failedCount: ft.failed ?? null,
+        fixCounts: fix ? { passed: effectiveTest(fix).passed, failed: effectiveTest(fix).failed ?? 0 } : null,
+        outcomeBasis: ft.basis,
         filesChangedBetween: [...new Set(changes.map((e) => (e.payload as any).file as string))].slice(0, 12),
         commitsBetween: commits.map((e) => ({ sha: String((e.payload as any).sha).slice(0, 7), message: String((e.payload as any).message ?? "").split("\n")[0], eventId: e.id })),
         commitAfterFix: followUp ? { sha: String((followUp.payload as any).sha).slice(0, 7), message: String((followUp.payload as any).message ?? "").split("\n")[0],
@@ -166,7 +167,7 @@ function problems(ctx: Ctx): MemoryEntity[] {
     open = [];
   };
   for (const e of tests) {
-    if ((e.payload as any).outcome === "failed") open.push(e);
+    if (effectiveTest(e).outcome === "failed") open.push(e);
     else close(e);
   }
   close(null);
@@ -296,13 +297,13 @@ export function buildMemory(store: Store, projectId: string): MemoryEntity[] {
 }
 
 /** Bump when the builder's logic changes, so memory built by older code is rebuilt. */
-export const MEMORY_VERSION = 2;
+export const MEMORY_VERSION = 3;
 
 function fingerprint(store: Store, projectId: string): string {
   const e = store.db.prepare("SELECT MAX(id) m, COUNT(*) n FROM event WHERE project_id = ?").get(projectId) as { m: number | null; n: number };
   const x = store.db.prepare("SELECT MAX(id) m FROM explanation WHERE project_id = ?").get(projectId) as { m: number | null };
   const u = store.db.prepare("SELECT COUNT(*) n FROM work_unit WHERE project_id = ?").get(projectId) as { n: number };
-  return `v${MEMORY_VERSION}:${e.m ?? 0}:${e.n}:${x.m ?? 0}:${u.n}`;
+  return `v${MEMORY_VERSION}.${TEST_RULES_VERSION}:${e.m ?? 0}:${e.n}:${x.m ?? 0}:${u.n}`;
 }
 
 /** Rebuilds memory if events, explanations or episodes changed since the last build. */

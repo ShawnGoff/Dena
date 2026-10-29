@@ -3,7 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { StoredEvent, Store } from "@dena/core";
+import { displaySummary, effectiveTest, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, Recorder } from "@dena/adapters";
 import { ClaudeCodeProvider, claudeAuthStatus, ensureMemory, loadMemory, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
 
@@ -52,9 +52,9 @@ class HttpError extends Error {
 }
 
 const compact = (e: StoredEvent) => ({
-  id: e.id, type: e.eventType, actor: e.actor, source: e.source, summary: e.summary, at: e.occurredAt,
+  id: e.id, type: e.eventType, actor: e.actor, source: e.source, summary: displaySummary(e), at: e.occurredAt,
   confidence: e.captureConfidence, notable: NOTABLE.has(e.eventType),
-  outcome: (e.payload as any).outcome ?? (e.payload as any).status ?? null,
+  outcome: e.eventType === "test_result" ? effectiveTest(e).outcome : (e.payload as any).status ?? null,
 });
 
 export async function startServer(store: Store, opts: ServerOptions = {}): Promise<RunningServer> {
@@ -200,7 +200,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       const others = new Map(store.eventsById(p.id, links.map((l) => l.otherId)).map((o) => [o.id, o]));
       const unit = store.db.prepare("SELECT unit_id FROM work_unit_event WHERE project_id = ? AND event_id = ?").get(p.id, id) as { unit_id: string } | undefined;
       return {
-        event: e,
+        event: { ...e, summary: displaySummary(e), capturedSummary: e.summary },
         episode: unit?.unit_id ?? null,
         links: links.map((l) => ({ ...l, other: others.has(l.otherId) ? compact(others.get(l.otherId)!) : null })),
         artifacts: store.artifactsFor(id).map((a) => {

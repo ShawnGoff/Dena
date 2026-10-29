@@ -279,6 +279,22 @@ CREATE TABLE memory_source (
 CREATE INDEX memory_source_entity ON memory_source(project_id, entity_id);
 `,
   },
+  {
+    version: 8,
+    name: "event_labels",
+    // Derived labels for events (e.g. a test run's outcome). Events stay immutable; labels are
+    // recomputed whenever the rules that produce them improve.
+    sql: `
+CREATE TABLE event_label (
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  event_id   INTEGER NOT NULL REFERENCES event(id) ON DELETE CASCADE,
+  key        TEXT NOT NULL,
+  value_json TEXT NOT NULL,
+  PRIMARY KEY (event_id, key)
+);
+CREATE INDEX event_label_project ON event_label(project_id);
+`,
+  },
 ];
 
 export function migrate(db: Database.Database): number {

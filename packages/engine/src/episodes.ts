@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { StoredEvent, Store } from "@dena/core";
+import { effectiveTest, type StoredEvent, type Store } from "@dena/core";
 
 /**
  * L1 episodes: deterministic grouping of events into units of work worth explaining.
@@ -103,7 +103,7 @@ export function buildEpisodes(events: StoredEvent[]): Episode[] {
         fileChanges: stat((e) => e.eventType.startsWith("file_")),
         commits: stat((e) => e.eventType === "git_commit"),
         tests: stat((e) => e.eventType === "test_result"),
-        testFailures: stat((e) => e.eventType === "test_result" && (e.payload as any).outcome === "failed"),
+        testFailures: stat((e) => e.eventType === "test_result" && effectiveTest(e).outcome === "failed"),
         notes: stat((e) => e.eventType === "agent_note"),
         commands: stat((e) => e.eventType === "command_executed"),
       },

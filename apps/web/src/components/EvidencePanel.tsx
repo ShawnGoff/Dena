@@ -46,8 +46,12 @@ export function EvidencePanel({ projectId, eventId, onSelect, onClose, onEpisode
     ["Capture", <span title={CONFIDENCE_HELP[e.captureConfidence]}>{e.captureConfidence} — {CONFIDENCE_HELP[e.captureConfidence]?.toLowerCase()}</span>],
   ];
   if (p.file) facts.push(["File", <code>{String(p.file)}</code>]);
-  if (p.outcome) facts.push(["Outcome", <Badge tone={tone({ type: e.eventType, outcome: p.outcome })}>{p.outcome}{p.testsPassed != null ? ` · ${p.testsPassed} passed, ${p.testsFailed ?? 0} failed` : ""}</Badge>]);
-  if (p.outcomeBasis) facts.push(["How we know", String(p.outcomeBasis)]);
+  // A test run's outcome is a derived label that can be re-read when Dena's rules improve.
+  const label = (e as { labels?: Record<string, any> }).labels?.test as { outcome: string; passed?: number; failed?: number; basis: string } | undefined;
+  const outcome = label?.outcome ?? p.outcome;
+  if (outcome) facts.push(["Outcome", <Badge tone={tone({ type: e.eventType, outcome })}>{outcome}{(label?.passed ?? p.testsPassed) != null ? ` · ${label?.passed ?? p.testsPassed} passed, ${label?.failed ?? p.testsFailed ?? 0} failed` : ""}</Badge>]);
+  if (label?.basis ?? p.outcomeBasis) facts.push(["How we know", String(label?.basis ?? p.outcomeBasis)]);
+  if (label && p.outcome && label.outcome !== p.outcome) facts.push(["Re-read", `Recorded as "${p.outcome}" at capture; Dena's improved rules now read it as "${label.outcome}".`]);
   if (p.exitCode != null) facts.push(["Exit code", String(p.exitCode)]);
   if (p.durationMs != null) facts.push(["Duration", `${p.durationMs} ms`]);
   if (p.sha) facts.push(["Commit", <code>{String(p.sha).slice(0, 12)}</code>]);
@@ -60,7 +64,7 @@ export function EvidencePanel({ projectId, eventId, onSelect, onClose, onEpisode
   return (
     <aside className="panel" aria-label="Evidence">
       <div className="panel-head">
-        <Badge tone={tone({ type: e.eventType, outcome: p.outcome ?? p.status ?? null })}>{TYPE_LABEL[e.eventType] ?? e.eventType}</Badge>
+        <Badge tone={tone({ type: e.eventType, outcome: outcome ?? p.status ?? null })}>{TYPE_LABEL[e.eventType] ?? e.eventType}</Badge>
         <h3>{e.summary}</h3>
         <button className="close" onClick={onClose} aria-label="Close">×</button>
       </div>

@@ -1,4 +1,4 @@
-import { redactText, sha256, type StoredEvent, type Store } from "@dena/core";
+import { effectiveTest, redactText, sha256, type StoredEvent, type Store } from "@dena/core";
 import { episodeEvents } from "./episodes.ts";
 
 /**
@@ -108,17 +108,18 @@ export function buildPacket(store: Store, projectId: string, unitId: string, opt
           const isTest = result?.eventType === "test_result";
           const exit = hp.exitCode !== undefined && hp.exitCode !== null ? `exit code ${hp.exitCode}` : rp.status === "error" ? "failed (non-zero exit)" : rp.status === "ok" ? "succeeded" : "no result recorded";
           const out = [rp.stdout, rp.stderr].filter(Boolean).join("\n").trim();
+          const tr = result ? effectiveTest(result) : null; // current label, not the reading stored at capture
           const lines = [
             `${isTest ? "TEST RUN" : "COMMAND"} run by the AI: ${take(String(p.input?.command ?? ""), BUDGET.command)}`,
             p.input?.description ? `stated purpose: ${p.input.description}` : null,
             `result: ${exit}${hp.durationMs ? `, ${hp.durationMs} ms` : ""}`,
-            isTest ? `test outcome: ${rp.outcome}${rp.testsPassed != null ? ` (${rp.testsPassed} passed, ${rp.testsFailed ?? 0} failed)` : ""} — ${rp.outcomeBasis}` : null,
+            isTest && tr ? `test outcome: ${tr.outcome}${tr.passed != null || tr.failed ? ` (${tr.passed ?? "?"} passed, ${tr.failed ?? 0} failed)` : ""} — ${tr.basis}` : null,
             out ? `output (tail):\n${take(out.slice(-BUDGET.output * 2), BUDGET.output)}` : null,
           ].filter(Boolean);
           const ids = [e.id, ...[result, hook].filter(Boolean).map((r) => r!.id)];
           [result, hook].forEach((r) => r && consumed.add(r.id));
           items.push({ kind: isTest ? "test" : "command", eventIds: ids, at,
-            facts: isTest ? { outcome: rp.outcome, passed: rp.testsPassed, failed: rp.testsFailed } : { status: rp.status ?? null, exitCode: hp.exitCode ?? null },
+            facts: isTest && tr ? { outcome: tr.outcome, passed: tr.passed, failed: tr.failed } : { status: rp.status ?? null, exitCode: hp.exitCode ?? null },
             text: lines.join("\n") });
           break;
         }

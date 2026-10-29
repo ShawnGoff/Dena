@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { BlobStore, sha256 } from "./blobs.ts";
+import { labelTestRun } from "./labels.ts";
 import { migrate } from "./migrations.ts";
+import { TEST_RULES_VERSION } from "./tests.ts";
 import {
   EVENT_SCHEMA_VERSION,
   NewEvent,
@@ -291,6 +293,57 @@ export class Store {
     return next;
   }
 
+  /**
+   * Brings derived labels up to date: labels new events, and relabels everything when the rules
+   * version changed. Cheap when nothing is new, so readers call it before reading.
+   */
+  ensureLabels(projectId: string): number {
+    const version = String(TEST_RULES_VERSION);
+    let last = Number(this.getCursor(projectId, "labels", "last_event_id") ?? 0);
+    if (this.getCursor(projectId, "labels", "rules_version") !== version) {
+      this.db.prepare("DELETE FROM event_label WHERE project_id = ?").run(projectId);
+      last = 0;
+    }
+    const max = (this.db.prepare("SELECT MAX(id) m FROM event WHERE project_id = ?").get(projectId) as { m: number | null }).m ?? 0;
+    if (max <= last && this.getCursor(projectId, "labels", "rules_version") === version) return 0;
+    const rows = this.db
+      .prepare("SELECT id, payload_json FROM event WHERE project_id = ? AND id > ? AND event_type = 'test_result' ORDER BY id")
+      .all(projectId, last) as { id: number; payload_json: string }[];
+    const full = this.db.prepare(`SELECT a.content_hash FROM event_artifact ea JOIN artifact a ON a.id = ea.artifact_id
+                                  WHERE ea.event_id = ? AND ea.role = 'output' LIMIT 1`);
+    const ins = this.db.prepare("INSERT OR REPLACE INTO event_label (project_id, event_id, key, value_json) VALUES (?, ?, 'test', ?)");
+    this.db.transaction(() => {
+      for (const r of rows) {
+        const p = JSON.parse(r.payload_json);
+        const art = full.get(r.id) as { content_hash: string } | undefined;
+        // The full output when it was stored separately; the inline excerpt otherwise.
+        const output = (art && this.blobs.get(art.content_hash)?.toString("utf8")) || [p.stdout, p.stderr].filter(Boolean).join("\n");
+        const label = labelTestRun({ command: String(p.command ?? ""), output, isError: p.status === "error", interrupted: !!p.interrupted },
+          { outcome: p.outcome, passed: p.testsPassed ?? undefined, failed: p.testsFailed ?? undefined, basis: p.outcomeBasis });
+        ins.run(projectId, r.id, JSON.stringify(label));
+      }
+    })();
+    this.setCursor(projectId, "labels", "last_event_id", String(max));
+    this.setCursor(projectId, "labels", "rules_version", version);
+    return rows.length;
+  }
+
+  private attachLabels(projectId: string, events: StoredEvent[]): StoredEvent[] {
+    if (!events.length) return events;
+    const rows = (events.length > 500
+      ? this.db.prepare("SELECT event_id, key, value_json FROM event_label WHERE project_id = ?").all(projectId)
+      : this.db.prepare(`SELECT event_id, key, value_json FROM event_label WHERE event_id IN (${events.map(() => "?").join(",")})`).all(...events.map((e) => e.id))) as
+      { event_id: number; key: string; value_json: string }[];
+    const by = new Map<number, Record<string, any>>();
+    for (const r of rows) {
+      const m = by.get(r.event_id) ?? {};
+      m[r.key] = JSON.parse(r.value_json);
+      by.set(r.event_id, m);
+    }
+    for (const e of events) if (by.has(e.id)) e.labels = by.get(e.id);
+    return events;
+  }
+
   timeline(projectId: string, opts: { limit?: number; sessionId?: string; types?: string[] } = {}): StoredEvent[] {
     const where = ["project_id = @projectId"];
     if (opts.sessionId) where.push("session_id = @sessionId");
@@ -300,7 +353,8 @@ export class Store {
     const rows = this.db
       .prepare(`SELECT * FROM event WHERE ${where.join(" AND ")} ORDER BY occurred_at, id LIMIT @limit`)
       .all(params) as any[];
-    return rows.map(rowToEvent);
+    this.ensureLabels(projectId);
+    return this.attachLabels(projectId, rows.map(rowToEvent));
   }
 
   /** Adds links between already-stored events (used by deterministic correlation). Idempotent. */
@@ -393,7 +447,8 @@ export class Store {
     const rows = this.db
       .prepare(`SELECT * FROM event WHERE project_id = ? AND id IN (${ids.map(() => "?").join(",")})`)
       .all(projectId, ...ids) as any[];
-    return rows.map(rowToEvent);
+    this.ensureLabels(projectId);
+    return this.attachLabels(projectId, rows.map(rowToEvent));
   }
 
   hasEvent(projectId: string, source: string, sourceEventId: string): boolean {

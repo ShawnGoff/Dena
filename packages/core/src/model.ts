@@ -113,4 +113,6 @@ export interface StoredEvent {
   captureConfidence: CaptureConfidence;
   contentHash: string;
   rawRef: string | null;
+  /** Derived labels (rebuildable), e.g. labels.test for a test run's current reading. */
+  labels?: Record<string, any>;
 }

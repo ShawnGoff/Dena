@@ -10,6 +10,8 @@ import {
   type IngestBatch,
   type NewEvent,
   type RedactionReport,
+  isTestCommand,
+  testOutcome,
 } from "@dena/core";
 
 /**
@@ -29,62 +31,8 @@ export const SOURCE = "claude_code.transcript";
 const INLINE_LIMIT = 2_000; // chars kept inline in an event payload; the rest goes to an artifact
 const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const HARNESS_TAG = /^\s*<(command-name|command-message|command-args|local-command-[a-z-]+|system-reminder|task-notification|bash-input|bash-stdout|bash-stderr|user-prompt-submit-hook)\b/;
-const TEST_RUNNER =
-  /^(?:npx\s+|pnpm\s+(?:exec\s+|dlx\s+)?|yarn\s+|bunx?\s+|python3?\s+-m\s+|\.\/)?(vitest|jest|mocha|pytest|playwright test|cypress run|go test|cargo test|rspec|phpunit|(npm|pnpm|yarn|bun)( run)? test(:[\w-]+)?|xcodebuild\b.*\btest\b|swift test|dotnet test|mvn test|gradlew? test|node --test)\b/;
-
-/**
- * True when one of the commands actually executed is a test runner. Heredoc bodies and
- * quoted strings are removed first: a script that merely mentions "vitest" is not a test run.
- */
-export function isTestCommand(command: string): boolean {
-  return commandSegments(command).some((seg) => TEST_RUNNER.test(seg));
-}
-
-function commandSegments(command: string): string[] {
-  return command
-    .replace(/<<-?\s*(['"]?)(\w+)\1[\s\S]*?\n\s*\2\b/g, "<<HEREDOC")
-    .replace(/'[^']*'|"[^"]*"/g, "''")
-    .split(/&&|\|\||;|\||\n/)
-    .map((seg) => seg.trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, ""))
-    .filter(Boolean);
-}
-
-export interface TestOutcome {
-  outcome: "passed" | "failed" | "unknown";
-  passed?: number;
-  failed?: number;
-  basis: string;
-}
-
-/**
- * Decides a test run's outcome without overclaiming. Prefers the runner's own summary line;
- * falls back to exit status only when the test runner is the sole command (in `npm test | grep x`
- * the exit status belongs to grep). Otherwise the outcome is unknown.
- */
-export function testOutcome(command: string, output: string, isError: boolean, interrupted: boolean): TestOutcome {
-  const num = (re: RegExp) => {
-    const m = output.match(re);
-    return m ? Number(m[1]) : undefined;
-  };
-  const summaries: [RegExp, RegExp, string][] = [
-    [/^# pass\s+(\d+)/m, /^# fail\s+(\d+)/m, "TAP summary"],
-    [/Tests?:?\s+.*?(\d+) passed/, /Tests?:?\s+.*?(\d+) failed/, "runner summary line"],
-    [/(\d+) passed/, /(\d+) failed/, "pass/fail counts in output"],
-  ];
-  for (const [p, f, label] of summaries) {
-    const passed = num(p);
-    const failed = num(f);
-    if (passed !== undefined || failed !== undefined) {
-      const bad = (failed ?? 0) > 0;
-      return { outcome: bad ? "failed" : "passed", passed, failed: failed ?? 0, basis: `parsed from ${label}` };
-    }
-  }
-  if (interrupted) return { outcome: "unknown", basis: "command was interrupted" };
-  const segs = commandSegments(command).filter((s) => !/^cd\b/.test(s));
-  if (segs.length === 1 && TEST_RUNNER.test(segs[0]!))
-    return { outcome: isError ? "failed" : "passed", basis: "exit status of the test command" };
-  return { outcome: "unknown", basis: "test ran inside a compound or piped command; exit status not attributable and no summary found" };
-}
+// Test recognition and outcome rules live in core so stored outcomes can be relabelled when they improve.
+export { isTestCommand, testOutcome, type TestOutcome } from "@dena/core";
 
 /** Claude Code names a project's transcript directory by replacing every non-alphanumeric char with '-'. */
 export function encodeProjectDir(root: string): string {

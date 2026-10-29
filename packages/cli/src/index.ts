@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import os from "node:os";
 import path from "node:path";
-import { correlate, Store, type StoredEvent } from "@dena/core";
+import { correlate, displaySummary, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
 import { buildPacket, claudeAuthStatus, ensureMemory, loadMemory, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
@@ -73,7 +73,7 @@ function printGroup(prompt: StoredEvent | null, children: StoredEvent[], all: bo
     : children.filter((e) => ["file_created", "file_modified", "file_deleted", "test_result", "error_detected", "git_commit", "branch_changed", "agent_note"].includes(e.eventType)
         || (e.eventType === "command_executed" && (e.payload as any).status !== "ok"));
   for (const e of notable)
-    console.log(`    ${ICON[e.eventType] ?? "?"} [${e.id}] ${e.summary}${e.captureConfidence !== "observed" ? `  (${e.captureConfidence})` : ""}`);
+    console.log(`    ${ICON[e.eventType] ?? "?"} [${e.id}] ${displaySummary(e)}${e.captureConfidence !== "observed" ? `  (${e.captureConfidence})` : ""}`);
 }
 
 async function main() {

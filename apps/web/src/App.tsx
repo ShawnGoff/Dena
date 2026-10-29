@@ -8,13 +8,14 @@ import { Guide } from "./views/Guide";
 import { Memory } from "./views/Memory";
 import { Wiki } from "./views/Wiki";
 import { Activity } from "./views/Activity";
+import { Code } from "./views/Code";
 
-type View = "overview" | "wiki" | "activity" | "timeline" | "guide" | "memory" | "search";
+type View = "overview" | "wiki" | "code" | "activity" | "timeline" | "guide" | "memory" | "search";
 
 /** URL query keeps the view shareable within this browser session: ?p=<project>&v=<view>&ep=<episode>&ev=<event>. */
 function readRoute() {
   const q = new URLSearchParams(location.search);
-  return { p: q.get("p"), v: (q.get("v") as View) || "overview", ep: q.get("ep"), ev: q.get("ev") ? Number(q.get("ev")) : null, page: q.get("page") };
+  return { p: q.get("p"), v: (q.get("v") as View) || "overview", ep: q.get("ep"), ev: q.get("ev") ? Number(q.get("ev")) : null, page: q.get("page"), file: q.get("file") };
 }
 
 export function App() {
@@ -32,6 +33,7 @@ export function App() {
       if (n.ep) q.set("ep", n.ep);
       if (n.ev != null) q.set("ev", String(n.ev));
       if (n.page) q.set("page", n.page);
+      if (n.file) q.set("file", n.file);
       history.pushState(null, "", `${location.pathname}${q.size ? `?${q}` : ""}`);
       return n;
     });
@@ -85,7 +87,7 @@ export function App() {
             </div>
             <Recording project={project} onChange={() => { loadProjects(); setRefresh((n) => n + 1); }} />
             <div className="tabs" role="tablist">
-              {(["overview", "wiki", "activity", "timeline", "guide", "memory", "search"] as View[]).map((v) => (
+              {(["overview", "wiki", "code", "activity", "timeline", "guide", "memory", "search"] as View[]).map((v) => (
                 <button key={v} role="tab" aria-selected={route.v === v} className={`tab ${route.v === v ? "active" : ""}`} onClick={() => go({ v })}>
                   {v[0]!.toUpperCase() + v.slice(1)}
                 </button>
@@ -93,12 +95,13 @@ export function App() {
             </div>
           </header>
           <div className={`layout ${route.ev != null ? "open" : ""}`} style={{ flex: 1, minHeight: 0 }}>
-            <div className={`content ${route.v === "guide" || route.v === "wiki" || route.v === "activity" ? "flush" : ""}`}>
+            <div className={`content ${route.v === "guide" || route.v === "wiki" || route.v === "code" || route.v === "activity" ? "flush" : ""}`}>
               {route.v === "overview" && <Overview projectId={project.id} refresh={refresh} onEvent={onEvent} onEpisode={(ep) => go({ v: "timeline", ep })} />}
               {route.v === "timeline" && <Timeline projectId={project.id} refresh={refresh} openEpisode={route.ep} selectedEvent={route.ev} onEvent={onEvent} />}
               {route.v === "guide" && <Guide projectId={project.id} openEpisode={route.ep} onEpisode={(ep) => go({ ep, ev: null })} onEvent={onEvent} />}
               {route.v === "wiki" && <Wiki projectId={project.id} page={route.page} onPage={(page) => go({ page, ev: null })} onEvent={onEvent}
                 onEpisode={(ep) => go({ v: "guide", ep, ev: null })} onMemory={() => go({ v: "memory", ev: null })} onWalkthrough={() => go({ v: "guide", ev: null })} />}
+              {route.v === "code" && <Code projectId={project.id} file={route.file} onFile={(file) => go({ file, ev: null })} onEvent={onEvent} />}
               {route.v === "activity" && <Activity projectId={project.id} onEvent={onEvent} />}
               {route.v === "memory" && <Memory projectId={project.id} onEvent={onEvent} onEpisode={(ep) => go({ v: "guide", ep, ev: null })} />}
               {route.v === "search" && <Search projectId={project.id} selectedEvent={route.ev} onEvent={onEvent} />}

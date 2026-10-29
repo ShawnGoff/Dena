@@ -14,3 +14,4 @@ export * from "./docs.ts";
 export * from "./updates.ts";
 export * from "./tokens.ts";
 export * from "./activity.ts";
+export * from "./code.ts";

@@ -36,6 +36,8 @@ export interface ProjectSettings {
   model?: string;
   /** "concise" asks for fewer, shorter claims from smaller packets; "thorough" teaches in more depth. */
   depth: "concise" | "thorough";
+  /** How explanations sign in to Claude: "account" (subscription, default) or "api-key" (billed API credits). */
+  auth?: "account" | "api-key";
   /** Optional ceiling on estimated spend for one batch run, in USD as reported by Claude Code. */
   maxUsdPerRun?: number;
 }

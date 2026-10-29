@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { correlate, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
-import { buildPacket, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
+import { buildPacket, claudeAuthStatus, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
 import { startServer } from "@dena/server";
 
@@ -40,7 +40,8 @@ const USAGE = `dena <command>
                                  explain many episodes in as few calls as possible; shows an estimate first
   serve [--port N]               open Dena's interface in your browser (local only; the printed link carries a one-time key)
   config <project> [key value]   show or set: model (e.g. haiku, sonnet; "default" = your Claude Code default),
-                                 depth (concise|thorough), max-usd (per batch run; "none" to clear)
+                                 depth (concise|thorough), max-usd (per batch run; "none" to clear),
+                                 auth (account = your Claude subscription, the default; api-key = billed API credits)
   timeline <project> [--session S] [--all]
                                  activity grouped by prompt
   show <project> <eventId>       one event with its links and artifacts
@@ -238,7 +239,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
           console.log(renderPacket(pk));
           break;
         }
-        const provider = new ClaudeCodeProvider();
+        const provider = new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account" });
         const x = await explainEpisode(store, p.id, ep.id, provider, { force: args.includes("--force"), model: flag("model"), depth,
           log: (m) => console.error(`· ${m}`) });
         const md = renderStep(x);
@@ -266,7 +267,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
   model: ${o.model ?? s.model ?? "your Claude Code default"} · depth: ${o.depth ?? s.depth}
   estimated usage: ${est.estimatedUsd !== null ? `~$${est.estimatedUsd.toFixed(2)} as Claude Code reports it (${est.basis})` : est.basis}${maxUsd !== undefined ? `\n  cap: stops before exceeding $${maxUsd}` : ""}`);
         if (!est.modelCalls) {
-          if (est.factsOnly) await explainMany(store, p.id, ids, new ClaudeCodeProvider(), o);
+          if (est.factsOnly) await explainMany(store, p.id, ids, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account" }), o);
           console.log("Nothing needs a model.");
           break;
         }
@@ -274,7 +275,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
           console.log("\nNothing generated. Re-run with --yes to go ahead.");
           break;
         }
-        const r = await explainMany(store, p.id, ids, new ClaudeCodeProvider(), { ...o, maxUsd, log: (m) => console.error(`· ${m}`),
+        const r = await explainMany(store, p.id, ids, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account" }), { ...o, maxUsd, log: (m) => console.error(`· ${m}`),
           onProgress: (x) => !x.cached && console.error(`  ✓ ${x.unitId} ${x.step.generatedBy === "facts" ? "(facts)" : x.batched ? "(shared call)" : ""}${x.validation.ok ? "" : " ⚠ problems remain"}`) });
         const repairs = r.explained.filter((x) => !x.cached && x.attempts > 1).length;
         console.log(`\nDone: ${r.explained.length} episodes, ${r.calls} model calls, $${r.spentUsd.toFixed(2)} reported, ${repairs} needed a repair`
@@ -300,11 +301,15 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
           else if (key === "depth") {
             if (value !== "concise" && value !== "thorough") throw new Error("depth is concise or thorough");
             store.updateProjectSettings(p.id, { depth: value });
+          } else if (key === "auth") {
+            if (value !== "account" && value !== "api-key") throw new Error("auth is account (your Claude subscription) or api-key (billed API credits)");
+            store.updateProjectSettings(p.id, { auth: value });
           } else if (key === "max-usd") store.updateProjectSettings(p.id, { maxUsdPerRun: value === "none" ? undefined : Number(value) });
           else throw new Error(`Unknown setting "${key}"`);
         }
         const s = store.projectSettings(p.id);
-        console.log(`model:   ${s.model ?? "(your Claude Code default)"}\ndepth:   ${s.depth}\nmax-usd: ${s.maxUsdPerRun ?? "(no cap)"}\nexclude: ${s.exclude.join(", ") || "(defaults only)"}`);
+        const st = claudeAuthStatus(s.auth ?? "account");
+        console.log(`auth:    ${s.auth ?? "account"} — ${st.detail}\nmodel:   ${s.model ?? "(your Claude Code default)"}\ndepth:   ${s.depth}\nmax-usd: ${s.maxUsdPerRun ?? "(no cap)"}\nexclude: ${s.exclude.join(", ") || "(defaults only)"}`);
         break;
       }
       case "gaps": {

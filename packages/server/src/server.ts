@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { StoredEvent, Store } from "@dena/core";
 import { git, hookInstall, Recorder } from "@dena/adapters";
-import { episodeEvents, loadEpisodes, rebuildEpisodes } from "@dena/engine";
+import { ClaudeCodeProvider, claudeAuthStatus, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
 
 /**
  * Dena's local server: a JSON API over the store plus the built web UI.
@@ -23,7 +23,12 @@ export interface ServerOptions {
   token?: string;
   webDir?: string;
   log?: (m: string) => void;
+  /** Model backend for explanations; defaults to the user's Claude Code. Injectable for tests. */
+  provider?: Provider;
 }
+
+/** Model names reach a command line, so only plain names and aliases are accepted ("haiku", "claude-sonnet-5-5"). */
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export interface RunningServer {
   url: string;
@@ -56,6 +61,16 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
   const token = opts.token ?? randomBytes(24).toString("base64url");
   const webDir = opts.webDir ?? DEFAULT_WEB_DIR;
   const recorders = new Map<string, Recorder>();
+  const inFlight = new Map<string, Promise<unknown>>();
+  /** A provider per call, so each project's sign-in setting applies. */
+  const getProvider = (projectId: string): Provider => {
+    if (opts.provider) return opts.provider;
+    try {
+      return new ClaudeCodeProvider(undefined, { auth: store.projectSettings(projectId).auth ?? "account" });
+    } catch (e) {
+      throw new HttpError(503, (e as Error).message);
+    }
+  };
   const log = opts.log ?? (() => {});
   let port = opts.port ?? 4600;
 
@@ -109,6 +124,63 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     }
 
     if (sub[0] === "episodes" && sub[2] === "events" && method === "GET") return episodeEvents(store, p.id, sub[1]!).map(compact);
+
+    if (sub[0] === "episodes" && sub[2] === "explanation" && method === "GET") {
+      const all = storedExplanations(store, p.id, sub[1]!);
+      const latestPerModel = [...new Map(all.map((x) => [`${x.requestedModel || x.model}|${x.depth}`, x])).values()];
+      const settings = store.projectSettings(p.id);
+      return { explanations: latestPerModel, estimate: estimate(store, p.id, [sub[1]!]), settings: { model: settings.model ?? null, depth: settings.depth },
+        busy: inFlight.has(`${p.id}:${sub[1]}`) };
+    }
+
+    if (sub[0] === "episodes" && sub[2] === "explain" && method === "POST") {
+      const unit = sub[1]!;
+      if (!loadEpisodes(store, p.id).some((e) => e.id === unit)) throw new HttpError(404, "No such episode");
+      const model = body?.model ?? undefined;
+      if (model !== undefined && (typeof model !== "string" || !MODEL_NAME.test(model))) throw new HttpError(400, "Invalid model name");
+      const key = `${p.id}:${unit}`;
+      if (inFlight.has(key)) throw new HttpError(409, "This episode is already being explained");
+      const job = explainEpisode(store, p.id, unit, getProvider(p.id), { model, force: body?.force === true, log: (m) => log(`[${p.name}] ${m}`) });
+      inFlight.set(key, job);
+      try {
+        const x = await job;
+        return { unitId: x.unitId, cached: x.cached, model: x.model, costUsd: x.costUsd, ok: x.validation.ok };
+      } catch (e) {
+        const msg = (e as Error).message;
+        log(`[${p.name}] explain failed: ${msg}`);
+        // Messages from explainFailure are written for users and contain no project content.
+        throw new HttpError(502, /^(Claude Code|Claude is|Your Anthropic|No valid API key)/.test(msg) ? msg : "The model call failed. Check Claude Code's sign-in, then try again.");
+      } finally {
+        inFlight.delete(key);
+      }
+    }
+
+    if (sub[0] === "auth" && method === "GET") {
+      if (opts.provider) return { found: true, loggedIn: true, method: "test", detail: "Test provider", auth: "account" };
+      const auth = store.projectSettings(p.id).auth ?? "account";
+      return { ...claudeAuthStatus(auth), auth };
+    }
+
+    if (sub[0] === "settings" && sub.length === 1) {
+      if (method === "POST") {
+        const patch: Record<string, unknown> = {};
+        if ("model" in (body ?? {})) {
+          if (body.model !== null && (typeof body.model !== "string" || !MODEL_NAME.test(body.model))) throw new HttpError(400, "Invalid model name");
+          patch.model = body.model ?? undefined;
+        }
+        if ("auth" in (body ?? {})) {
+          if (body.auth !== "account" && body.auth !== "api-key") throw new HttpError(400, "auth is account or api-key");
+          patch.auth = body.auth;
+        }
+        if ("depth" in (body ?? {})) {
+          if (body.depth !== "concise" && body.depth !== "thorough") throw new HttpError(400, "depth is concise or thorough");
+          patch.depth = body.depth;
+        }
+        store.updateProjectSettings(p.id, patch);
+      } else if (method !== "GET") throw new HttpError(405, "Method not allowed");
+      const s2 = store.projectSettings(p.id);
+      return { model: s2.model ?? null, depth: s2.depth, auth: s2.auth ?? "account", maxUsdPerRun: s2.maxUsdPerRun ?? null };
+    }
 
     if (sub[0] === "events" && sub.length === 2 && method === "GET") {
       const id = Number(sub[1]);

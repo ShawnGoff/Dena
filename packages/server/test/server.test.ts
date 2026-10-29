@@ -5,6 +5,19 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Store } from "@dena/core";
 import { startServer, type RunningServer } from "../src/server.ts";
+import type { GenerateResult, Provider } from "@dena/engine";
+
+/** Answers every explain call with a minimal valid step, citing E1, and records which model was asked for. */
+class FakeProvider implements Provider {
+  name = "fake";
+  models: (string | undefined)[] = [];
+  async generate(_s: string, _u: string, _schema: object, o?: { model?: string }): Promise<GenerateResult> {
+    this.models.push(o?.model);
+    return { json: { title: "Added a quaternion helper", summary: "s", whatHappened: [{ text: "The user asked for it.", kind: "observed", evidence: ["E1"] }],
+      whyItMattered: [], howItWorks: [], decisions: [], concepts: [], uncertainty: [] }, model: o?.model ?? "fake-default", costUsd: 0.002, durationMs: 1 };
+  }
+}
+const fake = new FakeProvider();
 
 let home: string;
 let web: string;
@@ -54,7 +67,7 @@ beforeAll(async () => {
       { sessionId: null, source: "t", sourceEventId: "f1", eventType: "file_modified", occurredAt: "2026-10-01T10:01:00Z", actor: "ai_agent", summary: "Modified src/math.ts", payload: { file: "src/math.ts" }, captureConfidence: "observed" },
     ],
   });
-  srv = await startServer(store, { port: 0, webDir: web });
+  srv = await startServer(store, { port: 0, webDir: web, provider: fake });
 });
 afterAll(async () => {
   await srv.close();
@@ -111,5 +124,36 @@ describe("local server API", () => {
   it("searches, treating punctuation as plain text", async () => {
     expect((await req(`/api/projects/${pid}/search?q=quaternion`)).json[0].summary).toBe("Add a quaternion helper");
     expect((await req(`/api/projects/${pid}/search?q=${encodeURIComponent('quat" OR * NEAR(')}`)).status).toBe(200);
+  });
+});
+
+describe("explanations API", () => {
+  it("explains an episode on request, caches it, and honours a per-request model", async () => {
+    const [ep] = (await req(`/api/projects/${pid}/episodes`)).json;
+    const before = (await req(`/api/projects/${pid}/episodes/${ep.id}/explanation`)).json;
+    expect(before.explanations).toEqual([]);
+    expect(before.estimate.modelCalls).toBe(1);
+
+    const r = (await req(`/api/projects/${pid}/episodes/${ep.id}/explain`, { method: "POST", body: {} })).json;
+    expect(r).toMatchObject({ cached: false, ok: true });
+    const after = (await req(`/api/projects/${pid}/episodes/${ep.id}/explanation`)).json;
+    expect(after.explanations[0].step.title).toBe("Added a quaternion helper");
+    expect(after.explanations[0].stale).toBe(false);
+
+    await req(`/api/projects/${pid}/episodes/${ep.id}/explain`, { method: "POST", body: { model: "opus", force: true } });
+    expect(fake.models.at(-1)).toBe("opus");
+    expect((await req(`/api/projects/${pid}/episodes/${ep.id}/explanation`)).json.explanations).toHaveLength(2);
+  });
+
+  it("rejects model names that could become command-line flags", async () => {
+    const [ep] = (await req(`/api/projects/${pid}/episodes`)).json;
+    for (const model of ["--dangerously-skip-permissions", "-p", "a b", "x".repeat(80)])
+      expect((await req(`/api/projects/${pid}/episodes/${ep.id}/explain`, { method: "POST", body: { model } })).status).toBe(400);
+    expect((await req(`/api/projects/${pid}/settings`, { method: "POST", body: { model: "--x" } })).status).toBe(400);
+  });
+
+  it("reads and updates the model and depth settings", async () => {
+    expect((await req(`/api/projects/${pid}/settings`, { method: "POST", body: { model: "haiku", depth: "concise" } })).json).toMatchObject({ model: "haiku", depth: "concise" });
+    expect((await req(`/api/projects/${pid}/settings`, { method: "POST", body: { model: null } })).json.model).toBeNull();
   });
 });

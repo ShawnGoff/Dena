@@ -276,3 +276,31 @@ export async function explainMany(
   }
   return result;
 }
+
+export interface StoredExplanation extends Explanation {
+  requestedModel: string;
+  depth: Depth;
+  createdAt: string;
+  /** True when the episode's evidence has changed since this was written. */
+  stale: boolean;
+}
+
+/**
+ * The explanations already written for an episode, newest first, without generating anything.
+ * Each is marked stale when the evidence it was built from no longer matches the current packet.
+ */
+export function storedExplanations(store: Store, projectId: string, unitId: string): StoredExplanation[] {
+  const rows = store.db
+    .prepare("SELECT * FROM explanation WHERE project_id = ? AND unit_id = ? AND prompt_version = ? ORDER BY id DESC")
+    .all(projectId, unitId, PROMPT_VERSION) as any[];
+  const current = new Map<string, string>();
+  return rows.map((r) => {
+    const depth = (r.depth ?? "thorough") as Depth;
+    if (!current.has(depth)) current.set(depth, buildPacket(store, projectId, unitId, { depth }).hash);
+    return {
+      unitId, step: Step.parse(JSON.parse(r.content_json)), validation: JSON.parse(r.validation_json), evidence: JSON.parse(r.evidence_json),
+      model: r.model, costUsd: r.cost_usd, cached: true, attempts: r.attempts, batched: !!r.batched, packetHash: r.packet_hash,
+      requestedModel: r.requested_model, depth, createdAt: r.created_at, stale: current.get(depth) !== r.packet_hash,
+    };
+  });
+}

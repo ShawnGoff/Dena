@@ -107,3 +107,43 @@ export interface EventDetail {
   links: { direction: "in" | "out"; otherId: number; linkType: string; strength: string; basis: string; other: EventLite | null }[];
   artifacts: { role: string; artifactType: string; uriOrPath: string | null; sizeBytes: number; content: string | null; truncated: boolean }[];
 }
+
+export type ClaimKind = "observed" | "inferred" | "agent_stated" | "background";
+export interface Claim {
+  text: string;
+  kind: ClaimKind;
+  evidence: string[];
+}
+export interface Step {
+  title: string;
+  summary: string;
+  whatHappened: Claim[];
+  whyItMattered: Claim[];
+  howItWorks: Claim[];
+  whatChanged: Claim[];
+  decisions: Claim[];
+  verification: Claim[];
+  concepts: { term: string; explanation: string }[];
+  uncertainty: string[];
+  generatedBy: "model" | "facts";
+}
+export interface StoredExplanation {
+  unitId: string;
+  step: Step;
+  validation: { ok: boolean; issues: { severity: "error" | "warning"; section: string; claim?: string; message: string }[]; counts: Record<ClaimKind, number>; citedShare: number };
+  evidence: Record<string, { eventIds: number[]; kind: string; at: string }>;
+  model: string | null;
+  requestedModel: string;
+  costUsd: number | null;
+  attempts: number;
+  batched: boolean;
+  depth: "concise" | "thorough";
+  createdAt: string;
+  stale: boolean;
+}
+export interface ExplanationInfo {
+  explanations: StoredExplanation[];
+  estimate: { episodes: number; cached: number; factsOnly: number; modelCalls: number; inputChars: number; estimatedUsd: number | null; basis: string };
+  settings: { model: string | null; depth: "concise" | "thorough" };
+  busy: boolean;
+}

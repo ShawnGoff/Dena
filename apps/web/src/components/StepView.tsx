@@ -82,6 +82,13 @@ export function StepView({ x, onRef, editable, onChange, onMarkIncorrect }: {
           <ul className="plain">{s.uncertainty.map((u, i) => <li key={i}>{u}</li>)}</ul>
         </section>
       )}
+      {(x.validation.autoFixes?.length ?? 0) > 0 && (
+        <section className="step-section">
+          <h3>Fixed automatically</h3>
+          <ul className="plain">{x.validation.autoFixes!.map((f, i) => <li key={i}>{f}</li>)}</ul>
+          <p className="faint" style={{ fontSize: 12.5 }}>To avoid another model call, Dena fixed these itself. It only removes or weakens statements; it never adds claims.</p>
+        </section>
+      )}
       {x.validation.issues.length > 0 && (
         <section className="step-section">
           <h3>Checks</h3>

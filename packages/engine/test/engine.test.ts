@@ -179,8 +179,9 @@ describe("validator", () => {
 
 describe("explainEpisode", () => {
   it("repairs once, caches by evidence, and regenerates when evidence changes", async () => {
+    // Too broken to fix locally (every story claim cites nothing real), so a repair call is made.
     const bad = goodStep();
-    bad.whatHappened = [claim("Tests passed.", "observed", ["E99"])];
+    bad.whatHappened = [claim("Tests passed.", "observed", ["E99"]), claim("It shipped.", "observed", ["E98"]), claim("Then more.", "inferred", [])];
     const fake = new FakeProvider([bad, goodStep()]);
     const ep = rebuildEpisodes(store, pid)[0]!;
 
@@ -202,8 +203,9 @@ describe("explainEpisode", () => {
   });
 
   it("keeps remaining problems visible instead of hiding them", async () => {
+    // Every story claim cites evidence that does not exist: too much to fix locally, and the repair is just as bad.
     const bad = goodStep();
-    bad.whatHappened.push(claim("A database migration ran.", "observed", ["E99"]));
+    bad.whatHappened = [claim("A database migration ran.", "observed", ["E99"]), claim("Then a cache was added.", "observed", ["E98"])];
     const x = await explainEpisode(store, pid, rebuildEpisodes(store, pid)[0]!.id, new FakeProvider([bad, bad]));
     expect(x.validation.ok).toBe(false);
     const md = renderStep(x);
@@ -472,5 +474,60 @@ describe("updates and export", () => {
     expect(markdown).toContain("*(edited by the owner)*");
     expect(markdown).toContain("## Problems and fixes");
     expect(markdown).toMatch(/\[E\d+\]\(#ep1-e\d+\)/);
+  });
+});
+
+describe("fewer repair calls", () => {
+  const ep = () => rebuildEpisodes(store, pid)[0]!.id;
+  it("fixes small problems locally by weakening or removing, and lists each fix", async () => {
+    const step = goodStep();
+    step.howItWorks.push(claim("The parser streams input.", "observed", ["E99"]));
+    step.decisions.push(claim("The AI preferred speed.", "agent_stated", [ref((t) => t.includes("2 passed, 1 failed"))]));
+    const fake = new FakeProvider([step]);
+    const x = await explainEpisode(store, pid, ep(), fake);
+    expect(fake.calls).toHaveLength(1); // no repair call
+    expect(x.validation.ok).toBe(true);
+    expect(x.step.howItWorks.some((c) => c.text === "The parser streams input.")).toBe(false);
+    expect(x.step.decisions.find((c) => c.text === "The AI preferred speed.")!.kind).toBe("inferred");
+    expect(x.validation.autoFixes!.join(" ")).toContain("Relabelled");
+    expect(x.validation.repairReasons!.length).toBeGreaterThan(0);
+    expect(renderStep(x)).toContain("### Fixed automatically");
+  });
+
+  it("only offers the 'You said' label when the episode has owner notes", async () => {
+    const schemas: any[] = [];
+    const spy: Provider = { name: "spy", async generate(_s, _u, schema) { schemas.push(schema); return { json: goodStep(), model: "m", costUsd: 0, durationMs: 1 }; } };
+    await explainEpisode(store, pid, ep(), spy);
+    const kinds = (sc: any) => sc.properties.whatHappened.items.properties.kind.enum as string[];
+    expect(kinds(schemas[0])).not.toContain("owner_stated");
+    addNote(store, pid, "step", ep(), { kind: "context", text: "Demo only." });
+    await explainEpisode(store, pid, ep(), spy, { force: true });
+    expect(kinds(schemas[1])).toContain("owner_stated");
+  });
+
+  it("tells the model which references exist and what each label may cite", async () => {
+    const fake = new FakeProvider([goodStep()]);
+    await explainEpisode(store, pid, ep(), fake);
+    expect(fake.calls[0]).toContain("<reference_guide>");
+    expect(fake.calls[0]).toMatch(/"agent_stated" may cite only: E\d+/);
+    expect(fake.calls[0]).toMatch(/Test runs: E\d+, E\d+/);
+  });
+});
+
+describe("test-outcome check wording", () => {
+  it("flags claims about results, not descriptions of a failing test (false positive seen in a real run)", () => {
+    const p = buildPacket(store, pid, rebuildEpisodes(store, pid)[0]!.id);
+    const pass = p.items.find((i) => i.kind === "test" && i.facts.outcome === "passed")!.ref;
+    const fail = p.items.find((i) => i.kind === "test" && i.facts.outcome === "failed")!.ref;
+    const issues = (text: string, ref: string) => {
+      const s = goodStep();
+      s.whatHappened = [claim(text, "observed", [ref])];
+      return validateStep(s, p).issues.filter((i) => /says tests/.test(i.message)).length;
+    };
+    expect(issues("Update the failing test's expected wording to match the new prompt.", pass)).toBe(0);
+    expect(issues("The fix addressed the failure in quoted fields.", pass)).toBe(0);
+    expect(issues("The tests passed on the first run.", fail)).toBe(1);
+    expect(issues("The suite failed after the change.", pass)).toBe(1);
+    expect(issues("All 3 tests passed.", fail)).toBe(1);
   });
 });

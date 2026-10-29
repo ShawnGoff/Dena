@@ -41,6 +41,8 @@ export function renderStep(x: Explanation, opts: { heading?: string; eventLink?:
   if (s.generatedBy === "facts") out.push("\n<sub>No model was used for this step: it changed nothing in the project, so Dena summarised the captured messages directly.</sub>\n");
   if (s.concepts.length) out.push(`\n### Concepts to understand\n\n${s.concepts.map((c) => `- **${c.term}** — ${c.explanation}`).join("\n")}\n`);
   if (s.uncertainty.length) out.push(`\n### Uncertainty\n\n${s.uncertainty.map((u) => `- ${u}`).join("\n")}\n`);
+  if (x.validation.autoFixes?.length)
+    out.push(`\n### Fixed automatically\n\n${x.validation.autoFixes.map((f) => `- ${f}`).join("\n")}\n\n<sub>Dena only removes or weakens statements when fixing; it never adds claims.</sub>\n`);
   const problems = x.validation.issues;
   if (problems.length)
     out.push(`\n### Checks\n\n${problems.map((p) => `- ${p.severity === "error" ? "⚠️" : "ℹ️"} ${p.section}${p.claim ? ` — “${p.claim}…”` : ""}: ${p.message}`).join("\n")}\n`);

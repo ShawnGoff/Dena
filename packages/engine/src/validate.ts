@@ -19,11 +19,20 @@ export interface Validation {
   counts: Record<Claim["kind"], number>;
   /** Share of project-specific claims (non-background) whose citations all exist. */
   citedShare: number;
+  /** The errors that triggered a repair call, kept so repair causes can be measured. */
+  repairReasons?: Issue[];
+  /** Problems Dena fixed itself by removing or weakening statements, shown to the reader. */
+  autoFixes?: string[];
 }
 
 const SECTIONS = ["whatHappened", "whyItMattered", "howItWorks", "whatChanged", "decisions", "verification"] as const;
-const PASS = /\b(pass(es|ed|ing)?|succeed(s|ed)?|green|all tests)\b/i;
-const FAIL = /\b(fail(s|ed|ing|ure)?|broke|red)\b/i;
+/**
+ * Claims about a test outcome ("tests passed", "the suite failed", "all 33 pass"). Descriptions
+ * such as "the failing test" or "fix the failure" are not outcome claims: matching them removed
+ * correct statements in a real run.
+ */
+const PASS = /\b(?:tests?|suite|run|checks?)\b[^.;]{0,40}\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|went green)\b|\ball (?:\d+ )?(?:tests? )?pass(?:ed|es)?\b|\b\d+ (?:tests? )?passed\b/i;
+const FAIL = /\b(?:tests?|suite|run|checks?)\b[^.;]{0,40}\b(?:fail(?:s|ed)?|broke)\b|\b\d+ (?:tests? )?failed\b/i;
 
 export function validateStep(step: Step, packet: Packet, opts: { depth?: "concise" | "thorough" } = {}): Validation {
   const issues: Issue[] = [];
@@ -85,4 +94,65 @@ export function validateStep(step: Step, packet: Packet, opts: { depth?: "concis
     issues.push({ severity: "warning", section: "uncertainty", message: "evidence was truncated but the step does not say so" });
 
   return { ok: !issues.some((i) => i.severity === "error"), issues, counts, citedShare: specific ? wellCited / specific : 1 };
+}
+
+const MODEL_SECTIONS = ["whatHappened", "whyItMattered", "howItWorks", "decisions"] as const;
+
+/**
+ * Fixes check failures without another model call, but only in ways that make the step say
+ * less, never more: a wrong label is lowered, a reference to evidence that does not exist is
+ * dropped, and a statement left with no support, or contradicting a captured test result, is
+ * removed. Every change is listed so the reader can see it.
+ *
+ * Returns `acceptable: false` when fixing would strip too much (then a repair call is better).
+ */
+export function autoFixStep(step: Step, packet: Packet, opts: { depth?: "concise" | "thorough" } = {}):
+  { step: Step; validation: Validation; fixes: string[]; acceptable: boolean } {
+  const items = new Map(packet.items.map((i) => [i.ref, i]));
+  const isAgent = (r: string) => ["agent_note", "ai_response"].includes(items.get(r)?.kind ?? "");
+  const isOwner = (r: string) => items.get(r)?.kind === "owner_note";
+  const fixes: string[] = [];
+  const before = MODEL_SECTIONS.reduce((n, s) => n + step[s].length, 0);
+  let removed = 0;
+  const out: Step = structuredClone(step);
+  const short = (t: string) => `“${t.length > 70 ? `${t.slice(0, 69)}…` : t}”`;
+
+  for (let pass = 0; pass < 3; pass++) {
+    const errors = validateStep(out, packet, opts).issues.filter((i) => i.severity === "error" && i.claim);
+    if (!errors.length) break;
+    for (const e of errors) {
+      if (!(MODEL_SECTIONS as readonly string[]).includes(e.section)) continue; // fact sections are Dena's own
+      const list = out[e.section as (typeof MODEL_SECTIONS)[number]];
+      const i = list.findIndex((c) => c.text.slice(0, 80) === e.claim);
+      if (i < 0) continue;
+      const c = list[i]!;
+      if (e.message.startsWith("cites evidence that does not exist")) {
+        c.evidence = c.evidence.filter((r) => items.has(r));
+        fixes.push(`Dropped a reference to evidence that does not exist from ${short(c.text)}.`);
+        if (!c.evidence.length && c.kind !== "background") {
+          list.splice(i, 1);
+          removed++;
+          fixes.push(`Removed ${short(c.text)}: none of its references existed.`);
+        }
+      } else if (/claim cites no evidence$/.test(e.message) || /^says tests (passed|failed)/.test(e.message)) {
+        list.splice(i, 1);
+        removed++;
+        fixes.push(`Removed ${short(c.text)}: ${e.message.startsWith("says") ? "it contradicted the captured test result" : "it cited no evidence"}.`);
+      } else if (e.message.startsWith("agent_stated claim must cite")) {
+        c.kind = "inferred";
+        fixes.push(`Relabelled ${short(c.text)} from “Agent said” to “Inferred”: it does not cite anything the AI said.`);
+      } else if (e.message.startsWith("owner_stated claim must cite")) {
+        c.kind = c.evidence.some(isAgent) ? "agent_stated" : "inferred";
+        fixes.push(`Relabelled ${short(c.text)} from “You said” to “${c.kind === "agent_stated" ? "Agent said" : "Inferred"}”: there is no note from you behind it.`);
+      } else if (e.message.startsWith("the owner's notes are not evidence")) {
+        c.kind = "owner_stated";
+        c.evidence = c.evidence.filter(isOwner);
+        fixes.push(`Relabelled ${short(c.text)} as “You said”: it rests only on your notes.`);
+      }
+    }
+  }
+  const validation = validateStep(out, packet, opts);
+  const emptied = MODEL_SECTIONS.some((s) => step[s].length >= 2 && out[s].length === 0);
+  const acceptable = validation.ok && !emptied && removed <= Math.max(1, Math.floor(before * 0.2));
+  return { step: out, validation: { ...validation, autoFixes: fixes }, fixes, acceptable };
 }

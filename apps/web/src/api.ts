@@ -132,7 +132,8 @@ export interface Step {
 export interface StoredExplanation {
   unitId: string;
   step: Step;
-  validation: { ok: boolean; issues: { severity: "error" | "warning"; section: string; claim?: string; message: string }[]; counts: Record<ClaimKind, number>; citedShare: number };
+  validation: { ok: boolean; issues: { severity: "error" | "warning"; section: string; claim?: string; message: string }[]; counts: Record<ClaimKind, number>; citedShare: number;
+    autoFixes?: string[] };
   evidence: Record<string, { eventIds: number[]; kind: string; at: string }>;
   model: string | null;
   requestedModel: string;

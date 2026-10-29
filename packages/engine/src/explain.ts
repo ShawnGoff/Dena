@@ -4,8 +4,8 @@ import { factsOnlyStep, needsModel, verificationFromFacts, whatChangedFromFacts 
 import { buildPacket, renderPacket, type Depth, type Packet } from "./packet.ts";
 import { addTokens, NO_TOKENS, type Provider, type TokenUsage } from "./provider.ts";
 import { estimateTokens } from "./tokens.ts";
-import { BATCH_JSON_SCHEMA, ModelStep, PROMPT_VERSION, STEP_JSON_SCHEMA, Step, batchPrompt, systemPrompt, userPrompt } from "./schema.ts";
-import { validateStep, type Validation } from "./validate.ts";
+import { ModelStep, PROMPT_VERSION, Step, batchJsonSchema, batchPrompt, referenceGuide, stepJsonSchema, systemPrompt, userPrompt } from "./schema.ts";
+import { autoFixStep, validateStep, type Validation } from "./validate.ts";
 import { recordGenerated } from "./revisions.ts";
 
 export interface Explanation {
@@ -116,25 +116,38 @@ export async function explainEpisode(store: Store, projectId: string, unitId: st
   }
 
   const project = store.getProject(projectId)!;
-  const prompt = userPrompt(project.name, title, renderPacket(packet), idx > 0 ? episodes[idx - 1]!.title : undefined);
-  const system = systemPrompt(depth);
+  const ownerNotes = packet.items.some((i) => i.kind === "owner_note");
+  const prompt = userPrompt(project.name, title, renderPacket(packet), idx > 0 ? episodes[idx - 1]!.title : undefined, referenceGuide(packet.items));
+  const system = systemPrompt(depth, { ownerNotes });
+  const schema = stepJsonSchema(ownerNotes);
   log(`sending ${packet.items.length} evidence items (${packet.chars} chars${packet.truncated ? ", some truncated" : ""}) to ${provider.name}${model ? ` [${model}]` : ""}, depth ${depth}`);
-  let res = await provider.generate(system, prompt, STEP_JSON_SCHEMA, { model: model || undefined });
+  let res = await provider.generate(system, prompt, schema, { model: model || undefined });
   let cost = res.costUsd ?? 0;
   let tokens: TokenUsage | null = res.tokens ?? null;
   let sentChars = prompt.length + system.length;
   let step = assemble(ModelStep.parse(res.json), packet);
   let validation = validateStep(step, packet, { depth });
   let attempts = 1;
+  let repairReasons: Validation["issues"] | undefined;
   if (!validation.ok) {
-    log(`checks found ${validation.issues.filter((i) => i.severity === "error").length} problems; one repair call`);
+    // Small problems are fixed here by weakening or removing statements; a repair call only when that would strip too much.
+    const fixed = autoFixStep(step, packet, { depth });
+    if (fixed.acceptable) {
+      log(`fixed ${fixed.fixes.length} problem${fixed.fixes.length === 1 ? "" : "s"} without another call: ${fixed.fixes.join(" ")}`);
+      step = fixed.step;
+      validation = { ...fixed.validation, repairReasons: validation.issues.filter((i) => i.severity === "error") };
+    }
+  }
+  if (!validation.ok) {
+    repairReasons = validation.issues.filter((i) => i.severity === "error");
+    log(`checks found ${repairReasons.length} problems; one repair call: ${repairReasons.map((i) => i.message.replace(/: .*$/, "")).join("; ")}`);
     const repair = repairPrompt(prompt, step, validation);
-    res = await provider.generate(system, repair, STEP_JSON_SCHEMA, { model: model || undefined });
+    res = await provider.generate(system, repair, schema, { model: model || undefined });
     cost += res.costUsd ?? 0;
     tokens = tokens && res.tokens ? addTokens(tokens, res.tokens) : null;
     sentChars += repair.length + system.length;
     step = assemble(ModelStep.parse(res.json), packet);
-    validation = validateStep(step, packet, { depth });
+    validation = { ...validateStep(step, packet, { depth }), repairReasons };
     attempts = 2;
   }
   const x: Explanation = { unitId, step, validation, evidence: evidenceMap(packet), model: res.model, costUsd: cost, tokens, cached: false, attempts, batched: false, packetHash: packet.hash };
@@ -244,7 +257,8 @@ export async function explainMany(
   }
 
   // Small episodes, several per call.
-  const system = systemPrompt(depth);
+  const anyOwner = small.some((g) => g.packet.items.some((i) => i.kind === "owner_note"));
+  const system = systemPrompt(depth, { ownerNotes: anyOwner });
   while (small.length) {
     const group: typeof small = [];
     let chars = 0;
@@ -258,11 +272,11 @@ export async function explainMany(
       small.length = 0;
       break;
     }
-    const prompt = batchPrompt(project.name, group.map((g) => ({ id: g.id, title: titles.get(g.id) ?? g.id, packetText: renderPacket(g.packet) })));
+    const prompt = batchPrompt(project.name, group.map((g) => ({ id: g.id, title: titles.get(g.id) ?? g.id, packetText: `${renderPacket(g.packet)}\n\n${referenceGuide(g.packet.items)}` })));
     log(`one call for ${group.length} small episodes (${chars} chars)`);
     let res;
     try {
-      res = await provider.generate(system, prompt, BATCH_JSON_SCHEMA, { model: model || undefined });
+      res = await provider.generate(system, prompt, batchJsonSchema(anyOwner), { model: model || undefined });
     } catch (err) {
       log(`batch call failed (${(err as Error).message}); explaining those episodes one by one`);
       large.unshift(...group.map((g) => g.id));
@@ -282,8 +296,12 @@ export async function explainMany(
         large.unshift(g.id); // missing or malformed in the batch: give it its own call
         continue;
       }
-      const step = assemble(parsed.data, g.packet);
-      const validation = validateStep(step, g.packet, { depth });
+      let step = assemble(parsed.data, g.packet);
+      let validation = validateStep(step, g.packet, { depth });
+      if (!validation.ok) {
+        const fixed = autoFixStep(step, g.packet, { depth });
+        if (fixed.acceptable) ({ step, validation } = fixed);
+      }
       if (!validation.ok) {
         large.unshift(g.id); // its own call includes a repair round if needed
         continue;

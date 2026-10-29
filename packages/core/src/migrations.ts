@@ -126,6 +126,43 @@ BEGIN
 END;
 `,
   },
+  {
+    version: 2,
+    name: "capture_state",
+    sql: `
+-- Last known state of each watched file. Derived bookkeeping for the watcher, not evidence:
+-- it can be rebuilt from a scan, which is why it lives outside the immutable event table.
+CREATE TABLE fs_state (
+  project_id   TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  path         TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  size_bytes   INTEGER NOT NULL,
+  mtime_ms     INTEGER NOT NULL,
+  snapshot_hash TEXT, -- blob hash of the redacted content, when Dena keeps a snapshot of this file
+  PRIMARY KEY (project_id, path)
+);
+
+-- Per-source cursors so recorders can resume where they stopped.
+CREATE TABLE capture_cursor (
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  source     TEXT NOT NULL,
+  key        TEXT NOT NULL,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, source, key)
+);
+`,
+  },
+  {
+    version: 3,
+    name: "gap_dedup_null_session",
+    // UNIQUE treats NULL session ids as distinct, so project-level gaps were duplicated.
+    sql: `
+DELETE FROM capture_gap WHERE id NOT IN (
+  SELECT MIN(id) FROM capture_gap GROUP BY project_id, source, COALESCE(session_id, ''), reason);
+CREATE UNIQUE INDEX capture_gap_unique ON capture_gap(project_id, source, COALESCE(session_id, ''), reason);
+`,
+  },
 ];
 
 export function migrate(db: Database.Database): number {

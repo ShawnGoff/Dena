@@ -54,6 +54,15 @@ describe("Store", () => {
     expect(store.blobs.get(art!.contentHash)?.toString()).toBe("hello");
   });
 
+  it("does not duplicate project-level gaps", () => {
+    const p = store.createProject("demo", "/tmp/demo");
+    const gap = { sessionId: null, source: "git", fromTime: null, toTime: null, reason: "reflog limit" };
+    store.ingest(p.id, batch({ gaps: [gap] }));
+    store.ingest(p.id, batch({ gaps: [gap] }));
+    store.recordGap(p.id, gap);
+    expect(store.gaps(p.id).filter((g) => g.reason === "reflog limit")).toHaveLength(1);
+  });
+
   it("survives a restart", () => {
     const p = store.createProject("demo", "/tmp/demo");
     store.ingest(p.id, batch());

@@ -16,6 +16,7 @@ export const EventType = z.enum([
   "file_modified",
   "file_deleted",
   "git_commit",
+  "branch_changed",
   "command_executed",
   "test_result",
   "error_detected",
@@ -71,6 +72,10 @@ export const LinkType = z.enum([
   "verifies", // test_result -> change
   "follows_failure", // corrective change -> earlier failure
   "part_of", // -> milestone
+  "same_change", // two sources observed the same file change (e.g. watcher + Edit tool result)
+  "changed_during", // file change observed while a command was running; does not prove the command made it
+  "committed_in", // working-tree change -> the commit that contains it
+  "created_commit", // command that ran `git commit` -> resulting commit
 ]);
 export type LinkType = z.infer<typeof LinkType>;
 

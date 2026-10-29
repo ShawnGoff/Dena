@@ -116,6 +116,83 @@ export interface ImportReport {
   redactions: RedactionReport;
   sensitiveFilesWithheld: number;
   unresolvedToolCalls: number;
+  /** Prompt groups whose activity pointed at a different project and were left out. */
+  excludedGroups: number;
+  excludedEvents: number;
+}
+
+/** `cd` targets in a shell command, with ~ expanded. */
+export function cdTargets(command: string): string[] {
+  const out: string[] = [];
+  const re = /(?:^|&&|;|\n|\|\|)\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/g;
+  for (const m of command.matchAll(re)) {
+    const t = (m[1] ?? m[2] ?? m[3] ?? "").replace(/\\ /g, " ");
+    out.push(t.startsWith("~") ? path.join(os.homedir(), t.slice(1)) : t);
+  }
+  return out;
+}
+
+const within = (p: string, root: string) => {
+  const r = path.relative(root, p);
+  return r === "" || (!r.startsWith("..") && !path.isAbsolute(r));
+};
+
+/**
+ * Transcript folders follow the directory Claude Code was launched in, but a session can
+ * `cd` into other repositories. Each prompt group (a prompt plus the activity it led to) is
+ * kept only when its own evidence points at this project:
+ *   inside  — a touched file under the root, or a `cd` into the root
+ *   outside — touched files or `cd` targets elsewhere, and nothing inside
+ * A group with no path evidence (pure conversation) follows the previous group in its session;
+ * the first one follows the directory the session was launched in.
+ */
+function attributeToProject(batch: IngestBatch, groupOf: Map<string, string>, root: string, report: ImportReport): IngestBatch {
+  const signal = new Map<string, { inside: number; outside: number; session: string | null; cwd?: string }>();
+  const order: string[] = [];
+  for (const e of batch.events) {
+    const g = groupOf.get(e.sourceEventId) ?? e.sourceEventId;
+    let s = signal.get(g);
+    if (!s) {
+      s = { inside: 0, outside: 0, session: e.sessionId };
+      signal.set(g, s);
+      order.push(g);
+    }
+    const p = e.payload as Record<string, any>;
+    if (e.eventType === "prompt_submitted" && typeof p.cwd === "string") s.cwd = p.cwd;
+    if (typeof p.file === "string") p.outsideRoot ? s.outside++ : s.inside++;
+    const target = e.eventType === "tool_invoked" ? (p.input?.file_path ?? p.input?.notebook_path ?? p.input?.path) : undefined;
+    if (typeof target === "string" && path.isAbsolute(target)) within(target, root) ? s.inside++ : s.outside++;
+    const cmd = e.eventType === "tool_invoked" && p.tool === "Bash" ? p.input?.command : undefined;
+    if (typeof cmd === "string")
+      for (const t of cdTargets(cmd)) if (path.isAbsolute(t)) within(t, root) ? s.inside++ : s.outside++;
+  }
+  const keep = new Set<string>();
+  const last = new Map<string | null, boolean>();
+  for (const g of order) {
+    const s = signal.get(g)!;
+    let k: boolean;
+    const promptless = g.startsWith("none:");
+    if (s.inside > 0) k = true;
+    else if (s.outside > 0) k = false;
+    // Activity outside any prompt (e.g. harness messages) with no path evidence is not kept,
+    // and does not set the context that later conversation inherits.
+    else if (promptless) k = false;
+    else k = last.get(s.session) ?? (s.cwd ? within(s.cwd, root) : false);
+    if (!promptless || s.inside + s.outside > 0) last.set(s.session, k);
+    if (k) keep.add(g);
+    else report.excludedGroups++;
+  }
+  const kept = (sid: string) => keep.has(groupOf.get(sid) ?? sid);
+  const events = batch.events.filter((e) => kept(e.sourceEventId));
+  report.excludedEvents += batch.events.length - events.length;
+  const sessions = new Set(events.map((e) => e.sessionId));
+  return {
+    sessions: batch.sessions.filter((s) => sessions.has(s.id)),
+    events,
+    artifacts: batch.artifacts.filter((a) => kept(a.sourceEventId)),
+    links: batch.links.filter((l) => kept(l.fromSourceEventId) && kept(l.toSourceEventId)),
+    gaps: batch.gaps.filter((g) => sessions.has(g.sessionId)),
+  };
 }
 
 interface PendingTool {
@@ -155,7 +232,11 @@ function unifiedDiff(file: string, hunks: any[]): string {
   return `--- a/${file}\n+++ b/${file}\n${body}\n`;
 }
 
-export async function importTranscript(file: string, projectRoot: string): Promise<{ batch: IngestBatch; report: ImportReport }> {
+export async function importTranscript(
+  file: string,
+  projectRoot: string,
+  opts: { attribution?: "project" | "all" } = {},
+): Promise<{ batch: IngestBatch; report: ImportReport }> {
   const root = path.resolve(projectRoot);
   const rel = (p: unknown): { path: string; outsideRoot: boolean } | null => {
     if (typeof p !== "string" || !p) return null;
@@ -175,15 +256,19 @@ export async function importTranscript(file: string, projectRoot: string): Promi
     redactions: newReport(),
     sensitiveFilesWithheld: 0,
     unresolvedToolCalls: 0,
+    excludedGroups: 0,
+    excludedEvents: 0,
   };
   const red = (s: string) => redactText(s, report.redactions);
   const batch: IngestBatch = { sessions: [], events: [], artifacts: [], links: [], gaps: [] };
   const sessions = new Map<string, { start: string; end: string; model?: string; branch?: string }>();
   const promptOf = new Map<string, string | null>(); // record uuid -> sourceEventId of the prompt it descends from
   const pending = new Map<string, PendingTool>();
+  const groupOf = new Map<string, string>(); // event sourceEventId -> prompt group key
 
   const push = (e: NewEvent, promptSid: string | null) => {
     batch.events.push(e);
+    groupOf.set(e.sourceEventId, promptSid ?? (e.eventType === "prompt_submitted" ? e.sourceEventId : `none:${e.sessionId}`));
     if (promptSid && e.sourceEventId !== promptSid)
       batch.links.push({
         source: SOURCE,
@@ -400,5 +485,6 @@ export async function importTranscript(file: string, projectRoot: string): Promi
     batch.gaps.push({ sessionId: id, source: SOURCE, fromTime: null, toTime: null,
       reason: "Changes made outside Claude Code (manual edits, other terminals) are not visible to this source" });
 
-  return { batch, report };
+  if (opts.attribution === "all") return { batch, report };
+  return { batch: attributeToProject(batch, groupOf, root, report), report };
 }

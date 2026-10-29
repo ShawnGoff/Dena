@@ -7,6 +7,8 @@ import { migrate } from "./migrations.ts";
 import {
   EVENT_SCHEMA_VERSION,
   NewEvent,
+  type LinkStrength,
+  type LinkType,
   type NewGap,
   type NewLink,
   type StoredEvent,
@@ -18,6 +20,18 @@ export interface Project {
   rootPath: string;
   createdAt: string;
   recordingState: "recording" | "paused" | "stopped";
+}
+
+export interface FsFileState {
+  hash: string;
+  size: number;
+  mtimeMs: number;
+  snapshotHash: string | null;
+}
+
+export interface ProjectSettings {
+  /** Extra excluded paths, relative to the project root. A trailing "/" means a directory; "*" matches within a segment. */
+  exclude: string[];
 }
 
 export interface IngestBatch {
@@ -157,7 +171,8 @@ export class Store {
           source: e.source,
           sourceEventId: e.sourceEventId,
           eventType: e.eventType,
-          occurredAt: e.occurredAt,
+          // Sources mix offsets (git: -07:00, Claude: Z); store UTC so ordering by string is correct.
+          occurredAt: new Date(e.occurredAt).toISOString(),
           observedAt: now,
           actor: e.actor,
           summary: e.summary,
@@ -199,6 +214,53 @@ export class Store {
     return result;
   }
 
+  fsState(projectId: string): Map<string, FsFileState> {
+    const rows = this.db.prepare("SELECT * FROM fs_state WHERE project_id = ?").all(projectId) as any[];
+    return new Map(rows.map((r) => [r.path, { hash: r.content_hash, size: r.size_bytes, mtimeMs: r.mtime_ms, snapshotHash: r.snapshot_hash }]));
+  }
+
+  setFsState(projectId: string, p: string, s: FsFileState | null): void {
+    if (!s) {
+      this.db.prepare("DELETE FROM fs_state WHERE project_id = ? AND path = ?").run(projectId, p);
+      return;
+    }
+    this.db
+      .prepare(`INSERT INTO fs_state (project_id, path, content_hash, size_bytes, mtime_ms, snapshot_hash) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (project_id, path) DO UPDATE SET content_hash = excluded.content_hash, size_bytes = excluded.size_bytes,
+                mtime_ms = excluded.mtime_ms, snapshot_hash = excluded.snapshot_hash`)
+      .run(projectId, p, s.hash, s.size, s.mtimeMs, s.snapshotHash);
+  }
+
+  getCursor(projectId: string, source: string, key: string): string | null {
+    const r = this.db.prepare("SELECT value FROM capture_cursor WHERE project_id = ? AND source = ? AND key = ?").get(projectId, source, key) as
+      | { value: string }
+      | undefined;
+    return r?.value ?? null;
+  }
+
+  setCursor(projectId: string, source: string, key: string, value: string): void {
+    this.db
+      .prepare(`INSERT INTO capture_cursor (project_id, source, key, value, updated_at) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (project_id, source, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
+      .run(projectId, source, key, value, new Date().toISOString());
+  }
+
+  getProject(id: string): Project | null {
+    const row = this.db.prepare("SELECT * FROM project WHERE id = ?").get(id);
+    return row ? rowToProject(row) : null;
+  }
+
+  projectSettings(id: string): ProjectSettings {
+    const r = this.db.prepare("SELECT settings_json FROM project WHERE id = ?").get(id) as { settings_json: string } | undefined;
+    return { exclude: [], ...(r ? JSON.parse(r.settings_json) : {}) };
+  }
+
+  updateProjectSettings(id: string, patch: Partial<ProjectSettings>): ProjectSettings {
+    const next = { ...this.projectSettings(id), ...patch };
+    this.db.prepare("UPDATE project SET settings_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(next), new Date().toISOString(), id);
+    return next;
+  }
+
   timeline(projectId: string, opts: { limit?: number; sessionId?: string; types?: string[] } = {}): StoredEvent[] {
     const where = ["project_id = @projectId"];
     if (opts.sessionId) where.push("session_id = @sessionId");
@@ -209,6 +271,24 @@ export class Store {
       .prepare(`SELECT * FROM event WHERE ${where.join(" AND ")} ORDER BY occurred_at, id LIMIT @limit`)
       .all(params) as any[];
     return rows.map(rowToEvent);
+  }
+
+  /** Adds links between already-stored events (used by deterministic correlation). Idempotent. */
+  linkEvents(links: { from: number; to: number; linkType: LinkType; strength: LinkStrength; basis: string }[]): number {
+    const ins = this.db.prepare(
+      "INSERT OR IGNORE INTO event_link (from_event_id, to_event_id, link_type, strength, basis) VALUES (?, ?, ?, ?, ?)",
+    );
+    let n = 0;
+    this.db.transaction(() => {
+      for (const l of links) n += ins.run(l.from, l.to, l.linkType, l.strength, l.basis).changes;
+    })();
+    return n;
+  }
+
+  recordGap(projectId: string, gap: NewGap): void {
+    this.db
+      .prepare("INSERT OR IGNORE INTO capture_gap (project_id, session_id, source, from_time, to_time, reason) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(projectId, gap.sessionId, gap.source, gap.fromTime, gap.toTime, gap.reason);
   }
 
   linksFor(eventId: number): { direction: "out" | "in"; otherId: number; linkType: string; strength: string; basis: string }[] {

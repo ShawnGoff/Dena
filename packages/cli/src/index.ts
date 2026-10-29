@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import os from "node:os";
 import path from "node:path";
-import { Store, type StoredEvent } from "@dena/core";
-import { claudeCode } from "@dena/adapters";
+import { correlate, Store, type StoredEvent } from "@dena/core";
+import { claudeCode, git, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
 
 const HOME = process.env.DENA_HOME ?? path.join(os.homedir(), ".dena");
 const [cmd, ...args] = process.argv.slice(2);
@@ -14,8 +14,17 @@ const flag = (name: string) => {
 const USAGE = `dena <command>
   init <dir> [--name N]          register a project folder
   projects                       list projects
-  import-claude <project>        import Claude Code transcripts for the project's folder
-                 [--file F]      ...or a single transcript file
+  record <project> [--scope own|all]
+                                 capture files, git and Claude Code until Ctrl-C
+  pause <project> / resume <project>
+                                 pause or resume a running recorder
+  import-claude <project> [--scope own|all] [--file F]
+                                 import Claude Code transcripts (default scope: all folders,
+                                 keeping only activity that points at this project)
+  import-git <project>           import commits and branch switches
+  correlate <project>            link related events across sources
+  exclude <project> <pattern>    add an excluded path (e.g. "generated/", "*.csv")
+  gaps <project>                 known holes in what was captured
   timeline <project> [--session S] [--all]
                                  activity grouped by prompt
   show <project> <eventId>       one event with its links and artifacts
@@ -31,7 +40,7 @@ function project(store: Store, ref: string | undefined) {
 const ICON: Record<string, string> = {
   prompt_submitted: "›", ai_response_received: "·", tool_invoked: "→", tool_completed: "✓",
   file_created: "+", file_modified: "~", file_deleted: "−", command_executed: "$", test_result: "▣",
-  error_detected: "!", session_marker: "#", agent_note: "✎",
+  error_detected: "!", session_marker: "#", agent_note: "✎", git_commit: "◆", branch_changed: "⑂",
 };
 
 function printGroup(prompt: StoredEvent | null, children: StoredEvent[], all: boolean) {
@@ -43,7 +52,7 @@ function printGroup(prompt: StoredEvent | null, children: StoredEvent[], all: bo
   if (parts.length) console.log(`    ${parts.join(", ")}`);
   const notable = all
     ? children
-    : children.filter((e) => ["file_created", "file_modified", "file_deleted", "test_result", "error_detected", "session_marker"].includes(e.eventType)
+    : children.filter((e) => ["file_created", "file_modified", "file_deleted", "test_result", "error_detected", "git_commit", "branch_changed"].includes(e.eventType)
         || (e.eventType === "command_executed" && (e.payload as any).status !== "ok"));
   for (const e of notable)
     console.log(`    ${ICON[e.eventType] ?? "?"} [${e.id}] ${e.summary}${e.captureConfidence !== "observed" ? `  (${e.captureConfidence})` : ""}`);
@@ -65,17 +74,91 @@ async function main() {
         break;
       case "import-claude": {
         const p = project(store, args[0]);
-        const files = flag("file") ? [path.resolve(flag("file")!)] : claudeCode.listTranscripts(p.rootPath);
-        if (!files.length) console.log(`No transcripts found in ${claudeCode.transcriptDirFor(p.rootPath)}`);
+        const scope = (flag("scope") ?? "all") as "own" | "all";
+        const files = flag("file") ? [path.resolve(flag("file")!)] : transcriptFiles(p.rootPath, scope);
+        if (scope === "all" && !flag("file"))
+          console.log(`Reading ${files.length} Claude Code transcripts from all project folders; only activity that points at ${p.rootPath} is stored.`);
+        let quiet = 0;
         for (const f of files) {
           const t0 = Date.now();
           const { batch, report } = await claudeCode.importTranscript(f, p.rootPath);
           const r = store.ingest(p.id, batch);
-          console.log(`${path.basename(f)}  ${report.lines} lines → +${r.eventsInserted} events (${r.eventsSkippedDuplicate} already stored), `
-            + `${r.linksInserted} links, ${r.artifactsStored} artifacts, ${r.gapsRecorded} gaps  `
-            + `| redacted ${report.redactions.count}, withheld ${report.sensitiveFilesWithheld} sensitive files, `
-            + `${report.unparseable} unparseable, ${Object.values(report.ignoredRecordTypes).reduce((a, b) => a + b, 0)} ignored records  (${Date.now() - t0}ms)`);
+          if (!r.eventsInserted && !r.eventsSkippedDuplicate) {
+            quiet++;
+            continue;
+          }
+          console.log(`${path.basename(path.dirname(f)).slice(-28)}/${path.basename(f).slice(0, 8)}  +${r.eventsInserted} events `
+            + `(${r.eventsSkippedDuplicate} dup), ${r.linksInserted} links, ${r.artifactsStored} artifacts | kept ${batch.events.length}, `
+            + `left out ${report.excludedEvents} from ${report.excludedGroups} prompt groups for other projects | `
+            + `redacted ${report.redactions.count}, withheld ${report.sensitiveFilesWithheld}  (${Date.now() - t0}ms)`);
         }
+        if (quiet) console.log(`${quiet} transcripts had no activity for this project.`);
+        const c = correlate(store, p.id);
+        console.log(`correlated: ${JSON.stringify(c)}`);
+        break;
+      }
+      case "import-git": {
+        const p = project(store, args[0]);
+        if (!git.isGitRepo(p.rootPath)) {
+          console.log(`${p.rootPath} is not a git repository.`);
+          break;
+        }
+        const { batch, report } = git.importGit(p.rootPath);
+        const r = store.ingest(p.id, batch);
+        console.log(`git: ${report.commits} commits, ${report.branchChanges} branch switches → +${r.eventsInserted} events, ${r.artifactsStored} diffs `
+          + `| redacted ${report.redactions.count}, withheld ${report.filesWithheld} sensitive files, ${report.diffsTruncated} diffs truncated`);
+        importGitIfChanged(store, p.id, p.rootPath); // set the recorder's fingerprint
+        console.log(`correlated: ${JSON.stringify(correlate(store, p.id))}`);
+        break;
+      }
+      case "correlate": {
+        const p = project(store, args[0]);
+        console.log(JSON.stringify(correlate(store, p.id)));
+        break;
+      }
+      case "record": {
+        const p = project(store, args[0]);
+        const scope = (flag("scope") ?? "all") as "own" | "all";
+        const ts = () => new Date().toTimeString().slice(0, 8);
+        const rec = new Recorder(store, p.id, { transcriptScope: scope, log: (m) => console.log(`${ts()}  ${m}`) });
+        console.log(`● Recording "${p.name}" (${p.rootPath})
+  sources: files (watcher), git${git.isGitRepo(p.rootPath) ? "" : " — not a git repo, skipped"}, Claude Code transcripts (${scope === "all" ? "all folders, filtered to this project" : "this folder only"})
+  not captured: commands you run yourself in other terminals; edits are seen, but not who made them
+  Ctrl-C to stop · "dena pause ${p.name}" to pause`);
+        await rec.start();
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            process.off("SIGINT", done);
+            process.off("SIGTERM", done);
+            resolve();
+          };
+          process.on("SIGINT", done);
+          process.on("SIGTERM", done);
+        });
+        await rec.stop();
+        console.log(`\n■ Stopped. ${JSON.stringify(store.stats(p.id).byType.slice(0, 6))}`);
+        break;
+      }
+      case "pause":
+      case "resume": {
+        const p = project(store, args[0]);
+        if (p.recordingState === "stopped") console.log(`"${p.name}" is not recording.`);
+        else {
+          store.setRecordingState(p.id, cmd === "pause" ? "paused" : "recording");
+          console.log(`${cmd === "pause" ? "Pause" : "Resume"} requested; the recorder applies it within a few seconds.`);
+        }
+        break;
+      }
+      case "exclude": {
+        const p = project(store, args[0]);
+        if (!args[1]) throw new Error("Give a pattern, e.g. dena exclude myproj generated/");
+        const s = store.updateProjectSettings(p.id, { exclude: [...new Set([...store.projectSettings(p.id).exclude, args[1]])] });
+        console.log(`Excluded: ${s.exclude.join(", ")}`);
+        break;
+      }
+      case "gaps": {
+        const p = project(store, args[0]);
+        for (const g of store.gaps(p.id)) console.log(`${g.source.padEnd(24)} ${g.fromTime ?? "—"} → ${g.toTime ?? "—"}  ${g.reason}`);
         break;
       }
       case "timeline": {

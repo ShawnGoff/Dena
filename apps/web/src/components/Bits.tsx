@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { EventLite } from "../api";
-import { ACTOR_LABEL, CONFIDENCE_HELP, TYPE_LABEL, timeOnly, tone } from "../format";
+import { authorLabel, CONFIDENCE_HELP, TYPE_LABEL, timeOnly, tone } from "../format";
 
 export function Badge({ tone = "muted", children, title }: { tone?: string; children: ReactNode; title?: string }) {
   return (
@@ -29,7 +29,7 @@ export function EventRow({ e, selected, onClick, showDate }: { e: EventLite; sel
           </Badge>
         )}{" "}
         <span className="faint" style={{ fontSize: 12 }}>
-          {ACTOR_LABEL[e.actor] ?? e.actor}
+          <span title={e.likelyAuthor ? `No source recorded the author; ${e.likelyAuthor.basis}` : undefined}>{authorLabel(e.actor, e.likelyAuthor)}</span>
         </span>
       </span>
     </div>

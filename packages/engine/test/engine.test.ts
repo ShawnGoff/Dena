@@ -129,11 +129,12 @@ describe("episodes", () => {
 });
 
 describe("evidence packet", () => {
-  it("folds tool calls into readable items with facts, and includes gaps", () => {
+  it("folds tool calls into readable items with facts, leaving standing limitations out", () => {
     const [ep] = rebuildEpisodes(store, pid);
     const p = buildPacket(store, pid, ep!.id);
     const kinds = p.items.map((i) => i.kind);
-    expect(kinds).toEqual(expect.arrayContaining(["prompt", "file_change", "test", "agent_note", "commit", "command", "gap"]));
+    expect(kinds).toEqual(expect.arrayContaining(["prompt", "file_change", "test", "agent_note", "commit", "command"]));
+    expect(kinds).not.toContain("gap"); // the fixture's only gap is a standing limitation, stated once in About this guide
     expect(p.items.find((i) => i.kind === "test" && i.facts.outcome === "failed")).toBeDefined();
     expect(p.items.filter((i) => i.kind === "file_change")).toHaveLength(2); // Write + Edit, not their raw tool events
     expect(renderPacket(p)).toContain("+  return splitQuoted(line);");

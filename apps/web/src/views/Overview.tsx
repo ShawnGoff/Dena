@@ -15,7 +15,6 @@ export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId
 
   const count = (t: string) => o.stats.byType.find((x) => x.type === t)?.n ?? 0;
   const total = o.stats.byType.reduce((n, x) => n + x.n, 0);
-  const unknown = o.stats.byActor.find((a) => a.actor === "unknown")?.n ?? 0;
   const live = o.project.recorderRunning && o.project.recordingState === "recording";
   // The same limitation recorded once per session reads better as one line with a count.
   const groups = [...o.gaps.reduce((m, g) => {
@@ -46,7 +45,12 @@ export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId
           <Source status={!o.sources.git ? "off" : live ? "live" : "ready"} label="Git" detail={o.sources.git ? "Commits, diffs, branch switches" : "This folder is not a git repository"} />
           <Source status={live ? "live" : "off"} label="File watcher" detail={live ? "Watching for changes" : "Runs while recording; changes made meanwhile are found on the next start"} />
           {!live && <p className="faint" style={{ fontSize: 12.5 }}>Nothing is being captured right now{o.project.recordingState !== "stopped" ? ", although recording was left on. Use Start recording above to resume" : ". Use Start recording above"}.</p>}
-          {unknown > 0 && <p className="faint" style={{ fontSize: 12.5, marginBottom: 0 }}>{unknown} events have an unknown author: Dena saw the change but no source recorded who made it.</p>}
+          {o.authors.unknown > 0 && (
+            <p className="faint" style={{ fontSize: 12.5, marginBottom: 0 }}>
+              Some changes have no recorded author (the file watcher and git don't record who made a change). From the connections Dena found,{" "}
+              {o.authors.likelyAi} are likely the AI{o.authors.possiblyAi ? `, ${o.authors.possiblyAi} possibly the AI` : ""}{o.authors.unclear ? `, and ${o.authors.unclear} are unclear` : ""}.
+            </p>
+          )}
         </div>
         <div className="card">
           <h2>Known gaps ({o.gaps.length})</h2>

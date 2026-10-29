@@ -1,6 +1,6 @@
 import type { Claim, ClaimKind, StoredExplanation } from "../api";
 import { ClaimList, KIND } from "./ClaimList";
-import { tokenLine } from "../format";
+import { isStandingLimitationText, tokenLine } from "../format";
 
 export { KIND };
 
@@ -76,10 +76,10 @@ export function StepView({ x, onRef, editable, onChange, onMarkIncorrect }: {
           </dl>
         </section>
       )}
-      {s.uncertainty.length > 0 && (
+      {s.uncertainty.filter((u) => !isStandingLimitationText(u)).length > 0 && (
         <section className="step-section">
           <h3>What is uncertain</h3>
-          <ul className="plain">{s.uncertainty.map((u, i) => <li key={i}>{u}</li>)}</ul>
+          <ul className="plain">{s.uncertainty.filter((u) => !isStandingLimitationText(u)).map((u, i) => <li key={i}>{u}</li>)}</ul>
         </section>
       )}
       {(x.validation.autoFixes?.length ?? 0) > 0 && (

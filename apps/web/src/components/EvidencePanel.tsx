@@ -41,7 +41,9 @@ export function EvidencePanel({ projectId, eventId, onSelect, onClose, onEpisode
 
   const facts: [string, ReactNode][] = [
     ["When", when(e.occurredAt)],
-    ["Who", e.actor === "unknown" ? <span title="No source recorded who made this">{ACTOR_LABEL.unknown}</span> : ACTOR_LABEL[e.actor] ?? e.actor],
+    ["Who", e.actor !== "unknown" ? ACTOR_LABEL[e.actor] ?? e.actor
+      : d.likelyAuthor ? <span>{d.likelyAuthor.confidence === "likely" ? "Likely the AI" : "Possibly the AI"} <span className="faint">— inferred: {d.likelyAuthor.basis}. No source recorded the author.</span></span>
+      : <span>Unknown <span className="faint">— no source recorded who made this, and nothing connects it to the AI.</span></span>],
     ["Source", SOURCE_LABEL[e.source] ?? e.source],
     ["Capture", <span title={CONFIDENCE_HELP[e.captureConfidence]}>{e.captureConfidence} — {CONFIDENCE_HELP[e.captureConfidence]?.toLowerCase()}</span>],
   ];

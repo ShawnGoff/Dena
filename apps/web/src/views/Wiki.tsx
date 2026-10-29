@@ -4,7 +4,10 @@ import { Badge, Loading } from "../components/Bits";
 import { KIND } from "../components/StepView";
 import { ClaimList } from "../components/ClaimList";
 import { DocBar, type DocResponse } from "../components/DocBar";
-import { tokenLine, tokenRange, when } from "../format";
+import { BusyBar, ModelChoice } from "../components/BusyBar";
+import { ModelSettings } from "../components/ModelSettings";
+import { isStandingLimitationText, tokenLine, tokenRange, when } from "../format";
+import { AboutGuide } from "../components/AboutGuide";
 
 interface PageInfo { key: string; title: string; sources: number; chars: number; generated: boolean; stale: boolean; model: string | null }
 interface Source { ref: string; type: "fact" | "claim"; grade: keyof typeof KIND; text: string; unitId: string | null; eventIds: number[] }
@@ -50,6 +53,8 @@ export function Wiki({ projectId, page, onPage, onEvent, onEpisode, onMemory, on
   return (
     <div className="guide">
       <nav className="toc" aria-label="Wiki pages">
+        <ModelSettings projectId={projectId} />
+        <AboutGuide projectId={projectId} />
         <div className="side-label">Pages</div>
         {pages.filter((p) => !p.key.startsWith("component:")).map(navItem)}
         <div className="side-label" style={{ marginTop: 14 }}>Components</div>
@@ -100,8 +105,15 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
     load();
   }, [load]);
 
+  const [stopping, setStopping] = useState(false);
+  const [runModel, setRunModel] = useState("");
+  const stop = async () => {
+    setStopping(true);
+    await api(`projects/${projectId}/wiki/stop`, { method: "POST", body: { key: pageKey } }).catch(() => {});
+  };
   const write = async (model?: string, force = false) => {
     setBusy(model ?? "default");
+    setStopping(false);
     setErr(null);
     try {
       await api(`projects/${projectId}/wiki/section`, { method: "POST", body: { key: pageKey, model, force } });
@@ -130,14 +142,18 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
 
   return (
     <div className="page" style={{ maxWidth: 840 }}>
-      {err && <div className="error">{err}</div>}
+      {busy && <BusyBar what={`Writing this page${busy !== "default" ? ` with ${busy[0]!.toUpperCase() + busy.slice(1)}` : ""}`} onStop={stop} stopping={stopping} />}
+      {err && <div className={err.startsWith("Stopped") ? "notice" : "error"}>{err}</div>}
       {!doc.active && (
         <div className="explain-card">
           <h2 className="step-title" style={{ marginTop: 0 }}>{LABEL(pageKey)}</h2>
           <p className="muted">Not written yet. Dena will send {r.brief.sources} sources (facts counted from events, and claims from explained episodes) to <b>{r.settings.model ?? "your default model"}</b>:
             {tokenRange(r.brief.tokens.low, r.brief.tokens.high)} (the high end if the checks ask for a repair).
             <span className="faint small" style={{ display: "block", marginTop: 4 }}>Token estimate {r.brief.tokens.calibrated ? "" : "uses "}{r.brief.tokens.basis}.</span></p>
-          <button className="btn primary" disabled={!!busy} onClick={() => write()}>{busy ? "Writing… this can take a minute" : "Write this page"}</button>
+          <span className="row">
+            <ModelChoice value={runModel} onChange={setRunModel} projectDefault={r.settings.model} />
+            <button className="btn primary" disabled={!!busy} onClick={() => write(runModel || undefined)}>Write this page</button>
+          </span>
         </div>
       )}
       {doc.active && <DocBar projectId={projectId} type="wiki" docKey={pageKey} doc={doc} onChanged={load} viewing={viewing} onView={setViewing} allowContext={false} />}
@@ -170,8 +186,8 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
                 }} />
             </section>
           ))}
-          {s.section.uncertainty.length > 0 && (
-            <section className="step-section"><h3>What is uncertain</h3><ul className="plain">{s.section.uncertainty.map((u, i) => <li key={i}>{u}</li>)}</ul></section>
+          {s.section.uncertainty.filter((u) => !isStandingLimitationText(u)).length > 0 && (
+            <section className="step-section"><h3>What is uncertain</h3><ul className="plain">{s.section.uncertainty.filter((u) => !isStandingLimitationText(u)).map((u, i) => <li key={i}>{u}</li>)}</ul></section>
           )}
           {s.validation.issues.length > 0 && (
             <section className="step-section"><h3>Checks</h3>
@@ -195,8 +211,9 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
             Written by {s.model ?? "unknown model"} · {when(s.createdAt)}{tokenLine(rev?.meta.tokens) ? ` · ${tokenLine(rev?.meta.tokens)}` : ""}{s.costUsd ? ` (API-equivalent $${s.costUsd.toFixed(3)})` : ""}{s.attempts > 1 ? " · needed 1 repair" : ""} · {Math.round(s.validation.groundedShare * 100)}% of project statements reach captured events
           </footer>
           <div className="explain-more">
-            <span className="muted">Want a more careful page? Stronger models use more of your plan.</span>
-            {["sonnet", "opus"].map((m) => <button key={m} className="btn" disabled={!!busy} onClick={() => write(m, true)}>{busy === m ? `Writing with ${m[0]!.toUpperCase() + m.slice(1)}…` : `Rewrite with ${m[0]!.toUpperCase() + m.slice(1)}`}</button>)}
+            <span className="muted">Rewrite this page. Stronger models are more careful and use more of your plan.</span>
+            <ModelChoice value={runModel} onChange={setRunModel} projectDefault={r.settings.model} />
+            <button className="btn" disabled={!!busy} onClick={() => write(runModel || undefined, true)}>Rewrite</button>
           </div>
         </article>
       )}

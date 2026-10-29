@@ -1,5 +1,6 @@
 import type { Explanation } from "./explain.ts";
 import type { Claim } from "./schema.ts";
+import { isStandingLimitationText } from "./packet.ts";
 
 /** Markdown rendering of one explained step. The structured step stays the source of truth. */
 
@@ -40,7 +41,8 @@ export function renderStep(x: Explanation, opts: { heading?: string; eventLink?:
   if (!s.verification.length && s.generatedBy !== "facts") out.push("\n### Verification\n\n- No test runs were captured for this work.\n");
   if (s.generatedBy === "facts") out.push("\n<sub>No model was used for this step: it changed nothing in the project, so Dena summarised the captured messages directly.</sub>\n");
   if (s.concepts.length) out.push(`\n### Concepts to understand\n\n${s.concepts.map((c) => `- **${c.term}** — ${c.explanation}`).join("\n")}\n`);
-  if (s.uncertainty.length) out.push(`\n### Uncertainty\n\n${s.uncertainty.map((u) => `- ${u}`).join("\n")}\n`);
+  const uncertain = s.uncertainty.filter((u) => !isStandingLimitationText(u)); // standing limitations appear once, in About this guide
+  if (uncertain.length) out.push(`\n### Uncertainty\n\n${uncertain.map((u) => `- ${u}`).join("\n")}\n`);
   if (x.validation.autoFixes?.length)
     out.push(`\n### Fixed automatically\n\n${x.validation.autoFixes.map((f) => `- ${f}`).join("\n")}\n\n<sub>Dena only removes or weakens statements when fixing; it never adds claims.</sub>\n`);
   const problems = x.validation.issues;

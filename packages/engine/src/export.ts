@@ -4,6 +4,7 @@ import { ensureMemory, loadMemory } from "./memory.ts";
 import { ensureDocRevision } from "./docs.ts";
 import type { Claim } from "./schema.ts";
 import { sectionKeys } from "./wiki.ts";
+import { isStandingLimitationText, standingLimitations } from "./packet.ts";
 
 /**
  * The whole guide as one Markdown file, rendered from the structured documents (never the other
@@ -50,7 +51,8 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
     h2(p.key.startsWith("component:") ? `Component: ${p.title}` : sec.title || p.title);
     out.push(sec.summary);
     for (const s of sec.sections) out.push("", `### ${s.heading}`, "", ...s.claims.map((c) => claimLine(c, (r) => `[${r}](#${prefix}-${r.toLowerCase()})`)));
-    if (sec.uncertainty.length) out.push("", "### What is uncertain", "", ...sec.uncertainty.map((u) => `- ${u}`));
+    const uncertainPage = sec.uncertainty.filter((u) => !isStandingLimitationText(u));
+    if (uncertainPage.length) out.push("", "### What is uncertain", "", ...uncertainPage.map((u) => `- ${u}`));
     const cited = [...new Set(sec.sections.flatMap((s) => s.claims.flatMap((c) => c.evidence)))].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
     if (cited.length) {
       out.push("", "<details><summary>Sources</summary>", "");
@@ -77,7 +79,8 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
         ["whatChanged", "What changed"], ["decisions", "Decisions"], ["verification", "Verification"]];
       for (const [k, label] of sections)
         if ((st[k] as Claim[])?.length) out.push("", `**${label}**`, "", ...(st[k] as Claim[]).map((c) => claimLine(c, (r) => `[${r}](#${prefix}-${r.toLowerCase()})`)));
-      if (st.uncertainty?.length) out.push("", "**What is uncertain**", "", ...(st.uncertainty as string[]).map((u) => `- ${u}`));
+      const uncertain = ((st.uncertainty ?? []) as string[]).filter((u) => !isStandingLimitationText(u));
+      if (uncertain.length) out.push("", "**What is uncertain**", "", ...uncertain.map((u) => `- ${u}`));
       const cited = [...new Set(sections.flatMap(([k]) => ((st[k] ?? []) as Claim[]).flatMap((c) => c.evidence)))].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
       if (cited.length) {
         out.push("", "<details><summary>Evidence</summary>", "");
@@ -119,6 +122,10 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
     `# ${project.name}: how it got built`, "",
     `> **Written by AI from captured project evidence, with the owner's corrections. It can be wrong.** Statements are labeled: **✓ Observed** (shown by the evidence), **~ Inferred** (a reasonable conclusion), **💬 Agent said** (the AI's own account), **🗣 You said** (the owner's context), **📘 Background** (general knowledge). References point to captured events (#123) kept in Dena.`,
     "", `*Exported from Dena on ${date.slice(0, 16).replace("T", " ")} UTC · ${episodes.length} episodes, ${steps.length} explained · ${pages.length} wiki pages written*`,
+    ...(standingLimitations(store, projectId).length
+      ? ["", "**About this guide.** What Dena could not capture, true for the whole project:", "", ...standingLimitations(store, projectId).map((l) => `- ${l}`),
+        "- Changes the file watcher or git saw have no recorded author; where Dena connects them to the AI, that is marked as likely, not certain."]
+      : []),
     "", "## Contents", "", ...toc,
   ];
   if (!pages.length && !steps.length) head.push("", "*Nothing has been written yet. Open the Wiki or the Guide in Dena to write pages; the sections below are built from captured facts.*");

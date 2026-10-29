@@ -19,6 +19,17 @@ export const TYPE_LABEL: Record<string, string> = {
 
 export const ACTOR_LABEL: Record<string, string> = { user: "You", ai_agent: "AI", automated_tool: "Tool", unknown: "Unknown author" };
 
+/** "Likely AI" / "Possibly AI" for unknown-author events with a supporting connection. */
+export function authorLabel(actor: string, likely?: { confidence: "likely" | "possibly" } | null): string {
+  if (actor !== "unknown") return ACTOR_LABEL[actor] ?? actor;
+  if (!likely) return "Unknown author";
+  return likely.confidence === "likely" ? "Likely AI" : "Possibly AI";
+}
+
+/** Matches text that only restates a project-wide limitation; those are shown once, in About this guide. */
+export const isStandingLimitationText = (t: string) =>
+  /outside (of )?claude code|not visible to (this|that) source|manual edits.{0,30}other terminals|older than the local reflog/i.test(t);
+
 export const SOURCE_LABEL: Record<string, string> = {
   "claude_code.transcript": "Claude Code transcript",
   "claude_code.hooks": "Claude Code hook",

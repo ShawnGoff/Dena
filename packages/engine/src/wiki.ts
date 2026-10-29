@@ -287,7 +287,7 @@ export function storedSection(store: Store, projectId: string, key: SectionKey, 
 
 /** Writes (or returns the cached) page for a section. One repair call if the checks find errors. */
 export async function generateSection(store: Store, projectId: string, key: SectionKey, provider: Provider,
-  opts: { model?: string; force?: boolean; log?: (m: string) => void } = {}): Promise<StoredSection> {
+  opts: { model?: string; force?: boolean; log?: (m: string) => void; signal?: AbortSignal } = {}): Promise<StoredSection> {
   const log = opts.log ?? (() => {});
   const settings = store.projectSettings(projectId);
   const model = opts.model ?? settings.model ?? "";
@@ -302,7 +302,7 @@ export async function generateSection(store: Store, projectId: string, key: Sect
   const kind = key.startsWith("component:") ? "component" : key;
   const user = `${PAGE_GUIDE[kind]}\n\nPage: ${brief.title}\n\n<sources>\n${renderBrief(brief)}\n</sources>\n\nWrite the page as JSON matching the schema.`;
   log(`sending ${brief.sources.length} sources (${brief.chars} chars) to ${provider.name}${model ? ` [${model}]` : ""}`);
-  let res = await provider.generate(WIKI_SYSTEM_PROMPT, user, WIKI_JSON_SCHEMA, { model: model || undefined });
+  let res = await provider.generate(WIKI_SYSTEM_PROMPT, user, WIKI_JSON_SCHEMA, { model: model || undefined, signal: opts.signal });
   let cost = res.costUsd ?? 0;
   let tokens: TokenUsage | null = res.tokens ?? null;
   let sentChars = user.length + WIKI_SYSTEM_PROMPT.length;
@@ -313,7 +313,7 @@ export async function generateSection(store: Store, projectId: string, key: Sect
     const errors = validation.issues.filter((i) => i.severity === "error");
     log(`checks found ${errors.length} problems; one repair call`);
     const repair = `${user}\n\nYour previous answer:\n${JSON.stringify(section)}\n\nFix each problem by correcting the claim, citing the right sources, lowering its kind, or removing it:\n${errors.map((e) => `- [${e.heading}] "${e.claim ?? ""}": ${e.message}`).join("\n")}`;
-    res = await provider.generate(WIKI_SYSTEM_PROMPT, repair, WIKI_JSON_SCHEMA, { model: model || undefined });
+    res = await provider.generate(WIKI_SYSTEM_PROMPT, repair, WIKI_JSON_SCHEMA, { model: model || undefined, signal: opts.signal });
     cost += res.costUsd ?? 0;
     tokens = tokens && res.tokens ? addTokens(tokens, res.tokens) : null;
     sentChars += repair.length + WIKI_SYSTEM_PROMPT.length;

@@ -6,3 +6,4 @@ export { BlobStore, sha256 } from "./blobs.ts";
 export { migrate, LATEST_SCHEMA_VERSION } from "./migrations.ts";
 export * from "./tests.ts";
 export * from "./labels.ts";
+export * from "./authors.ts";

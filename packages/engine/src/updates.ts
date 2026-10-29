@@ -1,7 +1,7 @@
 import type { Store } from "@dena/core";
 import { loadEpisodes } from "./episodes.ts";
 import { explainEpisode } from "./explain.ts";
-import { buildPacket } from "./packet.ts";
+import { buildPacket, packetMatches } from "./packet.ts";
 import type { Provider } from "./provider.ts";
 import { activeRevision, notesFor, revisions, type DocType } from "./revisions.ts";
 import { buildBrief, generateSection, sectionKeys, type SectionKey } from "./wiki.ts";
@@ -29,7 +29,7 @@ export function findOutdated(store: Store, projectId: string): Outdated[] {
     const rev = activeRevision(store, projectId, "step", e.id);
     if (!rev || rev.content?.generatedBy === "facts") continue;
     const packet = buildPacket(store, projectId, e.id, { depth: rev.meta.depth ?? store.projectSettings(projectId).depth });
-    if (packet.hash === rev.meta.packetHash) continue;
+    if (packetMatches(packet, rev.meta.packetHash)) continue;
     // Notes count as new if the AI has not written a version since they were added.
     const lastWritten = revisions(store, projectId, "step", e.id).find((r) => r.origin === "generated")?.createdAt ?? rev.createdAt;
     const notes = notesFor(store, projectId, "step", e.id).filter((n) => n.createdAt > lastWritten).length;

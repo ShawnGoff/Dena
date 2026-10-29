@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Claim, type Episode, type ExplanationInfo, type Step, type StoredExplanation } from "../api";
 import { DocBar, type DocResponse } from "../components/DocBar";
+import { AboutGuide } from "../components/AboutGuide";
+import { ModelSettings } from "../components/ModelSettings";
+import { BusyBar } from "../components/BusyBar";
 import { Badge, Loading } from "../components/Bits";
 import { StepView } from "../components/StepView";
 import { tokenRange, when } from "../format";
@@ -33,6 +36,7 @@ export function Guide({ projectId, openEpisode, onEpisode, onEvent }: {
     <div className="guide">
       <nav className="toc" aria-label="Walkthrough">
         <ModelSettings projectId={projectId} />
+        <AboutGuide projectId={projectId} />
         <label className="toggle" style={{ padding: "0 8px 10px" }}>
           <input type="checkbox" checked={onlyChanges} onChange={(e) => setOnlyChanges(e.target.checked)} /> only episodes that changed something
         </label>
@@ -74,8 +78,14 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
     load();
   }, [load]);
 
+  const [stopping, setStopping] = useState(false);
+  const stop = async () => {
+    setStopping(true);
+    await api(`projects/${projectId}/episodes/${ep.id}/stop`, { method: "POST", body: {} }).catch(() => {});
+  };
   const explain = async (model?: string, force = false) => {
     setBusy(model ?? "default");
+    setStopping(false);
     setErr(null);
     try {
       await api(`projects/${projectId}/episodes/${ep.id}/explain`, { method: "POST", body: { model, force } });
@@ -124,7 +134,8 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
           {s.notes > 0 && <Badge tone="warn">{plural(s.notes, "agent note")}</Badge>}
         </div>
       </div>
-      {err && <div className="error">{err}</div>}
+      {busy && <BusyBar what={`Explaining${busy !== "default" ? ` with ${busy[0]!.toUpperCase() + busy.slice(1)}` : ""}`} onStop={stop} stopping={stopping} />}
+      {err && <div className={err.startsWith("Stopped") ? "notice" : "error"}>{err}</div>}
 
       {!doc.active && (
         <div className="explain-card">
@@ -182,59 +193,6 @@ function HistoricalVersion({ projectId, docKey, id, onRef }: { projectId: string
       .then((r) => setRev(r.revision), () => setRev(null));
   }, [projectId, docKey, id]);
   return rev ? <StepView x={toExplanation(rev, false)} onRef={onRef} /> : <Loading />;
-}
-
-/** Which model writes new explanations, and how deep they go. Saved per project. */
-type Settings = { model: string | null; depth: "concise" | "thorough"; auth: "account" | "api-key" };
-type Auth = { found: boolean; loggedIn: boolean; method: string | null; detail: string };
-
-function ModelSettings({ projectId }: { projectId: string }) {
-  const [s, setS] = useState<Settings | null>(null);
-  const [auth, setAuth] = useState<Auth | null>(null);
-  const loadAuth = useCallback(() => api<Auth>(`projects/${projectId}/auth`).then(setAuth, () => {}), [projectId]);
-  useEffect(() => {
-    api<Settings>(`projects/${projectId}/settings`).then(setS, () => {});
-    loadAuth();
-  }, [projectId, loadAuth]);
-  if (!s) return null;
-  const save = (patch: Partial<Settings>) => api<Settings>(`projects/${projectId}/settings`, { method: "POST", body: patch }).then((n) => {
-    setS(n);
-    if ("auth" in patch) loadAuth();
-  }, () => {});
-  const known = ["haiku", "sonnet", "opus"];
-  return (
-    <div className="settings-box">
-      <label>
-        <span className="faint">Model</span>
-        <select value={s.model ?? ""} onChange={(e) => save({ model: e.target.value || null })}>
-          <option value="">Your Claude Code default</option>
-          <option value="haiku">Haiku (cheapest)</option>
-          <option value="sonnet">Sonnet</option>
-          <option value="opus">Opus (most precise)</option>
-          {s.model && !known.includes(s.model) && <option value={s.model}>{s.model}</option>}
-        </select>
-      </label>
-      <label>
-        <span className="faint">Depth</span>
-        <select value={s.depth} onChange={(e) => save({ depth: e.target.value as "concise" | "thorough" })}>
-          <option value="concise">Concise (less usage)</option>
-          <option value="thorough">Thorough</option>
-        </select>
-      </label>
-      <label>
-        <span className="faint">Sign-in</span>
-        <select value={s.auth} onChange={(e) => save({ auth: e.target.value as Settings["auth"] })}>
-          <option value="account">Claude account (subscription)</option>
-          <option value="api-key">API key (billed credits)</option>
-        </select>
-      </label>
-      {auth && (
-        <p className={auth.loggedIn && auth.method !== "api_key" ? "faint" : "auth-warn"} style={{ fontSize: 11.5, margin: "4px 0 0" }}>
-          {auth.detail}
-        </p>
-      )}
-    </div>
-  );
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;

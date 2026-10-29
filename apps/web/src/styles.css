@@ -302,3 +302,15 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .history { display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: var(--bg-raised); }
 .history-row { display: flex; gap: 10px; align-items: center; padding: 4px 6px; flex-wrap: wrap; }
 .history-row.active { background: var(--accent-soft); border-radius: 6px; }
+
+.about-guide { margin: 0 4px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-raised); font-size: 12.5px; }
+.about-guide summary { cursor: pointer; color: var(--text-dim); }
+.about-guide ul { margin-top: 8px; }
+
+.busy-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; position: sticky; top: 0; z-index: 2; }
+.busy-bar .btn { margin-left: auto; }
+.spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; display: inline-block; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+.model-choice { display: inline-flex; align-items: center; gap: 6px; }
+.model-choice select { background: var(--bg-sunken); color: var(--text); border: 1px solid var(--line-strong); border-radius: 7px; padding: 5px 8px; font: inherit; font-size: 12.5px; }

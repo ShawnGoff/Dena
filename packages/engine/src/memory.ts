@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { effectiveTest, TEST_RULES_VERSION, type StoredEvent, type Store } from "@dena/core";
 import { loadEpisodes, rebuildEpisodes } from "./episodes.ts";
+import { isStandingLimitationText } from "./packet.ts";
 import { Step, type Claim } from "./schema.ts";
 
 /**
@@ -276,7 +277,8 @@ function questions(ctx: Ctx, explained: LatestExplanation[]): MemoryEntity[] {
   for (const x of explained) {
     const firstEvent = Object.values(x.evidence).flatMap((v) => v.eventIds)[0];
     const when = firstEvent != null ? ctx.events.find((e) => e.id === firstEvent)?.occurredAt ?? null : null;
-    for (const u of x.step.uncertainty) add(u, "uncertainty in the explanation", x.unitId, null, when, refsIn(u, x));
+    for (const u of x.step.uncertainty)
+      if (!isStandingLimitationText(u)) add(u, "uncertainty in the explanation", x.unitId, null, when, refsIn(u, x)); // stated once, in About this guide
   }
   return [...seen.values()];
 }
@@ -297,7 +299,7 @@ export function buildMemory(store: Store, projectId: string): MemoryEntity[] {
 }
 
 /** Bump when the builder's logic changes, so memory built by older code is rebuilt. */
-export const MEMORY_VERSION = 3;
+export const MEMORY_VERSION = 4;
 
 function fingerprint(store: Store, projectId: string): string {
   const e = store.db.prepare("SELECT MAX(id) m, COUNT(*) n FROM event WHERE project_id = ?").get(projectId) as { m: number | null; n: number };

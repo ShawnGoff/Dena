@@ -40,8 +40,19 @@ export interface GenerateResult {
 
 export interface Provider {
   readonly name: string;
-  /** `opts.model`: any model name or alias the backend accepts; omitted = the backend's default. */
-  generate(system: string, user: string, schema: object, opts?: { model?: string }): Promise<GenerateResult>;
+  /**
+   * `opts.model`: any model name or alias the backend accepts; omitted = the backend's default.
+   * `opts.signal`: aborting it stops the call; the promise then rejects with a StoppedError.
+   */
+  generate(system: string, user: string, schema: object, opts?: { model?: string; signal?: AbortSignal }): Promise<GenerateResult>;
+}
+
+/** Raised when the owner stops a generation. Nothing from the stopped call is saved. */
+export class StoppedError extends Error {
+  constructor() {
+    super("Stopped. Nothing was saved.");
+    this.name = "StoppedError";
+  }
 }
 
 /** Finds a Claude Code binary: $DENA_CLAUDE_BIN, `claude` on PATH, or the desktop app's bundled CLI (newest). */
@@ -109,7 +120,8 @@ export class ClaudeCodeProvider implements Provider {
     if (!this.bin) throw new Error("Could not find Claude Code. Install it, or set DENA_CLAUDE_BIN to its path.");
   }
 
-  generate(system: string, user: string, schema: object, callOpts: { model?: string } = {}): Promise<GenerateResult> {
+  generate(system: string, user: string, schema: object, callOpts: { model?: string; signal?: AbortSignal } = {}): Promise<GenerateResult> {
+    if (callOpts.signal?.aborted) return Promise.reject(new StoppedError());
     const model = callOpts.model ?? this.opts.model;
     const args = [
       "-p", "--output-format", "json", "--json-schema", JSON.stringify(schema),
@@ -127,12 +139,20 @@ export class ClaudeCodeProvider implements Provider {
       const child = spawn(this.bin!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: childEnv(auth) });
       let out = "", err = "";
       const timer = setTimeout(() => child.kill("SIGTERM"), this.opts.timeoutMs ?? 300_000);
+      let stopped = false;
+      const onAbort = () => {
+        stopped = true;
+        child.kill("SIGTERM"); // ends the model call; tokens already spent by it are not reported
+      };
+      callOpts.signal?.addEventListener("abort", onAbort, { once: true });
       child.stdout.on("data", (d) => (out += d));
       child.stderr.on("data", (d) => (err += d));
       child.on("error", reject);
       child.on("close", (code) => {
         clearTimeout(timer);
+        callOpts.signal?.removeEventListener("abort", onAbort);
         fs.rmSync(cwd, { recursive: true, force: true });
+        if (stopped) return reject(new StoppedError());
         let o: any;
         try {
           o = JSON.parse(out);

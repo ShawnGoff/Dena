@@ -65,7 +65,11 @@ export interface EventLite {
   notable: boolean;
   outcome: string | null;
   snippet?: string;
+  /** For changes no source attributed: who most likely made them, and why Dena thinks so. */
+  likelyAuthor?: LikelyAuthor | null;
 }
+export interface LikelyAuthor { who: "ai"; confidence: "likely" | "possibly"; basis: string }
+
 export interface Episode {
   id: string;
   position: number;
@@ -89,6 +93,7 @@ export interface Overview {
   sources: { git: boolean; hooksProject: boolean; hooksUser: boolean };
   gaps: Gap[];
   recent: EventLite[];
+  authors: { unknown: number; likelyAi: number; possiblyAi: number; unclear: number };
   episodes: { total: number; explained: number; latest: Omit<Episode, "explained">[] };
 }
 export interface EventDetail {
@@ -107,6 +112,7 @@ export interface EventDetail {
   };
   episode: string | null;
   links: { direction: "in" | "out"; otherId: number; linkType: string; strength: string; basis: string; other: EventLite | null }[];
+  likelyAuthor: LikelyAuthor | null;
   artifacts: { role: string; artifactType: string; uriOrPath: string | null; sizeBytes: number; content: string | null; truncated: boolean }[];
 }
 

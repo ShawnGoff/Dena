@@ -3,11 +3,11 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { displaySummary, effectiveTest, type StoredEvent, type Store } from "@dena/core";
+import { authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, lastHeartbeat, liveRecorder, Recorder, type RecorderOptions } from "@dena/adapters";
-import { cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
+import { packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
-  RevisionConflict, saveUserEdit, Step, WikiSection, type DocType,
+  RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
   estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
 
 /**
@@ -56,17 +56,26 @@ class HttpError extends Error {
   }
 }
 
-const compact = (e: StoredEvent) => ({
+const compact = (e: StoredEvent, likely?: Map<number, LikelyAuthor>) => ({
   id: e.id, type: e.eventType, actor: e.actor, source: e.source, summary: displaySummary(e), at: e.occurredAt,
   confidence: e.captureConfidence, notable: NOTABLE.has(e.eventType),
   outcome: e.eventType === "test_result" ? effectiveTest(e).outcome : (e.payload as any).status ?? null,
+  likelyAuthor: likely?.get(e.id) ?? null,
 });
+
+/** Compacts a list, looking up likely authors for its unknown-author events in one query. */
+const compactAll = (store: Store, projectId: string, events: StoredEvent[]) => {
+  const likely = likelyAuthors(store, projectId, events.filter((e) => e.actor === "unknown").map((e) => e.id));
+  return events.map((e) => compact(e, likely));
+};
 
 export async function startServer(store: Store, opts: ServerOptions = {}): Promise<RunningServer> {
   const token = opts.token ?? randomBytes(24).toString("base64url");
   const webDir = opts.webDir ?? DEFAULT_WEB_DIR;
   const recorders = new Map<string, Recorder>();
-  const inFlight = new Map<string, Promise<unknown>>();
+  /** Generations in progress, each with the control that stops it (the Stop button). */
+  const inFlight = new Map<string, AbortController>();
+  const stopped = (e: unknown) => e instanceof StoppedError;
 
   // Background updates: one runner per project; retries are scheduled, and queued work resumes after a restart.
   const runners = new Map<string, Promise<void>>();
@@ -163,7 +172,8 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
           hooksUser: hookInstall.installedIn("user"),
         },
         gaps: store.gaps(p.id),
-        recent: store.eventsById(p.id, recent.map((r) => r.id)).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)).map(compact),
+        recent: compactAll(store, p.id, store.eventsById(p.id, recent.map((r) => r.id)).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))),
+        authors: authorSummary(store, p.id),
         episodes: { total: episodes.length, explained, latest: episodes.slice(-5).reverse() },
       };
     }
@@ -178,7 +188,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       return eps.map((e) => ({ ...e, explained: explained.has(e.id) }));
     }
 
-    if (sub[0] === "episodes" && sub[2] === "events" && method === "GET") return episodeEvents(store, p.id, sub[1]!).map(compact);
+    if (sub[0] === "episodes" && sub[2] === "events" && method === "GET") return compactAll(store, p.id, episodeEvents(store, p.id, sub[1]!));
 
     if (sub[0] === "episodes" && sub[2] === "explanation" && method === "GET") {
       const all = storedExplanations(store, p.id, sub[1]!);
@@ -188,6 +198,18 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         busy: inFlight.has(`${p.id}:${sub[1]}`) };
     }
 
+    if (sub[0] === "episodes" && sub[2] === "stop" && method === "POST") {
+      const c = inFlight.get(`${p.id}:${sub[1]}`);
+      c?.abort();
+      return { stopping: !!c };
+    }
+
+    if (sub[0] === "wiki" && sub[1] === "stop" && method === "POST") {
+      const c = inFlight.get(`${p.id}:wiki:${String(body?.key ?? "")}`);
+      c?.abort();
+      return { stopping: !!c };
+    }
+
     if (sub[0] === "episodes" && sub[2] === "explain" && method === "POST") {
       const unit = sub[1]!;
       if (!loadEpisodes(store, p.id).some((e) => e.id === unit)) throw new HttpError(404, "No such episode");
@@ -195,12 +217,13 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       if (model !== undefined && (typeof model !== "string" || !MODEL_NAME.test(model))) throw new HttpError(400, "Invalid model name");
       const key = `${p.id}:${unit}`;
       if (inFlight.has(key)) throw new HttpError(409, "This episode is already being explained");
-      const job = explainEpisode(store, p.id, unit, getProvider(p.id), { model, force: body?.force === true, log: (m) => log(`[${p.name}] ${m}`) });
-      inFlight.set(key, job);
+      const controller = new AbortController();
+      inFlight.set(key, controller);
       try {
-        const x = await job;
+        const x = await explainEpisode(store, p.id, unit, getProvider(p.id), { model, force: body?.force === true, signal: controller.signal, log: (m) => log(`[${p.name}] ${m}`) });
         return { unitId: x.unitId, cached: x.cached, model: x.model, costUsd: x.costUsd, ok: x.validation.ok };
       } catch (e) {
+        if (stopped(e)) throw new HttpError(409, (e as Error).message);
         const msg = (e as Error).message;
         log(`[${p.name}] explain failed: ${msg}`);
         // Messages from explainFailure are written for users and contain no project content.
@@ -242,12 +265,13 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       if (model !== undefined && (typeof model !== "string" || !MODEL_NAME.test(model))) throw new HttpError(400, "Invalid model name");
       const flight = `${p.id}:wiki:${key}`;
       if (inFlight.has(flight)) throw new HttpError(409, "This page is already being written");
-      const job = generateSection(store, p.id, key, getProvider(p.id), { model, force: body?.force === true, log: (m) => log(`[${p.name}] wiki ${key}: ${m}`) });
-      inFlight.set(flight, job);
+      const controller = new AbortController();
+      inFlight.set(flight, controller);
       try {
-        const s = await job;
+        const s = await generateSection(store, p.id, key, getProvider(p.id), { model, force: body?.force === true, signal: controller.signal, log: (m) => log(`[${p.name}] wiki ${key}: ${m}`) });
         return { key, cached: s.cached, ok: s.validation.ok, model: s.model };
       } catch (e) {
+        if (stopped(e)) throw new HttpError(409, (e as Error).message);
         const msg = (e as Error).message;
         log(`[${p.name}] wiki ${key} failed: ${msg}`);
         throw new HttpError(502, /^(Claude Code|Claude is|Your Anthropic|No valid API key|There is no captured)/.test(msg) ? msg : "The model call failed. Check Claude Code's sign-in, then try again.");
@@ -298,7 +322,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         let stale = false;
         if (active)
           stale = type === "step"
-            ? buildPacket(store, p.id, key, { depth: active.meta.depth ?? store.projectSettings(p.id).depth }).hash !== active.meta.packetHash
+            ? !packetMatches(buildPacket(store, p.id, key, { depth: active.meta.depth ?? store.projectSettings(p.id).depth }), active.meta.packetHash)
             : buildBrief(store, p.id, key as SectionKey).hash !== active.meta.inputHash;
         const slim = (r: ReturnType<typeof activeRevision>) => r && { id: r.id, origin: r.origin, status: r.status, note: r.note, createdAt: r.createdAt, model: r.meta.model ?? null, userEdited: !!r.meta.userEdited };
         return { active, proposed: proposedRevision(store, p.id, type, key), stale, history: revisions(store, p.id, type, key).map(slim), notes: notesFor(store, p.id, type, key, { all: true }) };
@@ -334,6 +358,8 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       }
       throw new HttpError(404, "Not found");
     }
+
+    if (sub[0] === "about" && method === "GET") return { limitations: standingLimitations(store, p.id) };
 
     if (sub[0] === "auth" && method === "GET") {
       if (opts.provider) return { found: true, loggedIn: true, method: "test", detail: "Test provider", auth: "account" };
@@ -373,6 +399,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         event: { ...e, summary: displaySummary(e), capturedSummary: e.summary },
         episode: unit?.unit_id ?? null,
         links: links.map((l) => ({ ...l, other: others.has(l.otherId) ? compact(others.get(l.otherId)!) : null })),
+        likelyAuthor: e.actor === "unknown" ? likelyAuthors(store, p.id, [id]).get(id) ?? null : null,
         artifacts: store.artifactsFor(id).map((a) => {
           const buf = store.blobs.get(a.contentHash);
           const text = buf ? buf.toString("utf8") : null;
@@ -383,7 +410,9 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
 
     if (sub[0] === "search" && method === "GET") {
       const q = url.searchParams.get("q") ?? "";
-      return store.search(p.id, q, 60).map((h) => ({ ...compact(h.event), snippet: h.snippet }));
+      const hits = store.search(p.id, q, 60);
+      const rows = compactAll(store, p.id, hits.map((h) => h.event));
+      return rows.map((r, i) => ({ ...r, snippet: hits[i]!.snippet }));
     }
 
     if (sub[0] === "recording" && method === "POST") {

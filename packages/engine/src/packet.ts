@@ -30,8 +30,31 @@ export interface Packet {
   unitId: string;
   items: EvidenceItem[];
   hash: string;
+  /**
+   * Fingerprints this same evidence had under earlier packet rules. A written explanation whose
+   * stored fingerprint matches one of these is still current: only the packet's form changed.
+   */
+  legacyHashes: string[];
   chars: number;
   truncated: boolean;
+}
+
+/** Whether a stored fingerprint still describes this packet's evidence. */
+export const packetMatches = (p: Packet, stored: string | null | undefined) => !!stored && (stored === p.hash || p.legacyHashes.includes(stored));
+
+/**
+ * Standing limitations hold for a whole project ("changes made outside Claude Code are not
+ * visible"). They are shown once in "About this guide" rather than repeated in every step.
+ */
+export const isStandingGap = (g: { fromTime: string | null; toTime: string | null }) => g.fromTime === null && g.toTime === null;
+
+/** Text that only restates a standing limitation (written before they were left out of packets). */
+export const isStandingLimitationText = (t: string) =>
+  /outside (of )?claude code|not visible to (this|that) source|manual edits.{0,30}other terminals|older than the local reflog/i.test(t);
+
+/** The project's standing limitations, each stated once, for "About this guide". */
+export function standingLimitations(store: Store, projectId: string): string[] {
+  return [...new Set(store.gaps(projectId).filter(isStandingGap).map((g) => g.reason))];
 }
 
 export type Depth = "concise" | "thorough";
@@ -197,7 +220,7 @@ export function buildPacket(store: Store, projectId: string, unitId: string, opt
     for (const g of store.gaps(projectId)) {
       const overlaps = (g.fromTime === null || g.fromTime <= to) && (g.toTime === null || g.toTime >= from);
       if (overlaps && (!g.sessionId || sessions.has(g.sessionId)) && g.source !== "git")
-        items.push({ kind: "gap", eventIds: [], at: g.fromTime ?? from, facts: {}, text: `KNOWN GAP IN CAPTURE: ${g.reason}` });
+        items.push({ kind: "gap", eventIds: [], at: g.fromTime ?? from, facts: { standing: isStandingGap(g) }, text: `KNOWN GAP IN CAPTURE: ${g.reason}` });
     }
   }
 
@@ -209,20 +232,30 @@ export function buildPacket(store: Store, projectId: string, unitId: string, opt
     items.push({ kind: "owner_note", eventIds: [], at: events[events.length - 1]?.occurredAt ?? n.createdAt, facts: { noteId: n.id, noteKind: n.kind }, text });
   }
 
-  items.sort((a, b) => a.at.localeCompare(b.at));
-  foldRepeatedTests(items);
-  // Enforce the total budget from the end of the episode backwards: the opening prompt matters most.
-  let total = 0;
-  const kept = items.filter((it) => {
-    total += it.text.length;
-    if (total > BUDGET.total && !["prompt", "test", "commit", "agent_note", "owner_note"].includes(it.kind)) {
-      truncated = true;
-      return false;
-    }
-    return true;
-  });
-  const final = kept.map((it, i) => ({ ...it, ref: `E${i + 1}`, text: redactText(it.text) }));
-  return { unitId, items: final, hash: sha256(JSON.stringify(final.map((i) => [i.ref, i.text]))), chars: final.reduce((n, i) => n + i.text.length, 0), truncated };
+  const finalize = (list: Omit<EvidenceItem, "ref">[]) => {
+    const work = structuredClone(list);
+    work.sort((a, b) => a.at.localeCompare(b.at));
+    foldRepeatedTests(work);
+    // Enforce the total budget from the end of the episode backwards: the opening prompt matters most.
+    let total = 0, cut = false;
+    const kept = work.filter((it) => {
+      total += it.text.length;
+      if (total > BUDGET.total && !["prompt", "test", "commit", "agent_note", "owner_note"].includes(it.kind)) {
+        cut = true;
+        return false;
+      }
+      return true;
+    });
+    const final = kept.map((it, i) => ({ ...it, ref: `E${i + 1}`, text: redactText(it.text) }));
+    return { final, cut, hash: sha256(JSON.stringify(final.map((i) => [i.ref, i.text]))) };
+  };
+  // Standing limitations are left out (see isStandingGap); the hash including them is kept so
+  // explanations written before this change are not flagged as outdated.
+  const current = finalize(items.filter((i) => !(i.kind === "gap" && i.facts.standing)));
+  const legacy = items.some((i) => i.kind === "gap" && i.facts.standing) ? finalize(items).hash : current.hash;
+  truncated ||= current.cut;
+  return { unitId, items: current.final, hash: current.hash, legacyHashes: legacy === current.hash ? [] : [legacy],
+    chars: current.final.reduce((n, i) => n + i.text.length, 0), truncated };
 }
 
 /**

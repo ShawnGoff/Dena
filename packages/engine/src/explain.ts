@@ -1,7 +1,7 @@
 import type { Store } from "@dena/core";
 import { loadEpisodes } from "./episodes.ts";
 import { factsOnlyStep, needsModel, verificationFromFacts, whatChangedFromFacts } from "./facts.ts";
-import { buildPacket, renderPacket, type Depth, type Packet } from "./packet.ts";
+import { buildPacket, packetMatches, renderPacket, type Depth, type Packet } from "./packet.ts";
 import { addTokens, NO_TOKENS, type Provider, type TokenUsage } from "./provider.ts";
 import { estimateTokens } from "./tokens.ts";
 import { ModelStep, PROMPT_VERSION, Step, batchJsonSchema, batchPrompt, referenceGuide, stepJsonSchema, systemPrompt, userPrompt } from "./schema.ts";
@@ -25,6 +25,8 @@ export interface Explanation {
 
 export interface ExplainOptions {
   force?: boolean;
+  /** Stops the generation when aborted (the Stop button). */
+  signal?: AbortSignal;
   /** Overrides the project's model setting for this run. */
   model?: string;
   depth?: Depth;
@@ -44,9 +46,9 @@ export function evidenceMap(packet: Packet): Explanation["evidence"] {
 function cachedRow(store: Store, projectId: string, unitId: string, packet: Packet, model: string): Explanation | null {
   // Any model's explanation of the same evidence is reused unless a specific model was asked for.
   const row = store.db
-    .prepare(`SELECT * FROM explanation WHERE project_id = ? AND unit_id = ? AND packet_hash = ? AND prompt_version = ?
+    .prepare(`SELECT * FROM explanation WHERE project_id = ? AND unit_id = ? AND packet_hash IN (SELECT value FROM json_each(?)) AND prompt_version = ?
               ORDER BY (requested_model = ? OR model = ?) DESC, (generated_by = 'facts') DESC, id DESC LIMIT 1`)
-    .get(projectId, unitId, packet.hash, PROMPT_VERSION, model, model) as any;
+    .get(projectId, unitId, JSON.stringify([packet.hash, ...packet.legacyHashes]), PROMPT_VERSION, model, model) as any;
   if (!row) return null;
   if (model && row.generated_by !== "facts" && row.requested_model !== model && row.model !== model) return null;
   return { unitId, step: Step.parse(JSON.parse(row.content_json)), validation: JSON.parse(row.validation_json), evidence: JSON.parse(row.evidence_json),
@@ -121,7 +123,7 @@ export async function explainEpisode(store: Store, projectId: string, unitId: st
   const system = systemPrompt(depth, { ownerNotes });
   const schema = stepJsonSchema(ownerNotes);
   log(`sending ${packet.items.length} evidence items (${packet.chars} chars${packet.truncated ? ", some truncated" : ""}) to ${provider.name}${model ? ` [${model}]` : ""}, depth ${depth}`);
-  let res = await provider.generate(system, prompt, schema, { model: model || undefined });
+  let res = await provider.generate(system, prompt, schema, { model: model || undefined, signal: opts.signal });
   let cost = res.costUsd ?? 0;
   let tokens: TokenUsage | null = res.tokens ?? null;
   let sentChars = prompt.length + system.length;
@@ -142,7 +144,7 @@ export async function explainEpisode(store: Store, projectId: string, unitId: st
     repairReasons = validation.issues.filter((i) => i.severity === "error");
     log(`checks found ${repairReasons.length} problems; one repair call: ${repairReasons.map((i) => i.message.replace(/: .*$/, "")).join("; ")}`);
     const repair = repairPrompt(prompt, step, validation);
-    res = await provider.generate(system, repair, schema, { model: model || undefined });
+    res = await provider.generate(system, repair, schema, { model: model || undefined, signal: opts.signal });
     cost += res.costUsd ?? 0;
     tokens = tokens && res.tokens ? addTokens(tokens, res.tokens) : null;
     sentChars += repair.length + system.length;
@@ -276,7 +278,7 @@ export async function explainMany(
     log(`one call for ${group.length} small episodes (${chars} chars)`);
     let res;
     try {
-      res = await provider.generate(system, prompt, batchJsonSchema(anyOwner), { model: model || undefined });
+      res = await provider.generate(system, prompt, batchJsonSchema(anyOwner), { model: model || undefined, signal: opts.signal });
     } catch (err) {
       log(`batch call failed (${(err as Error).message}); explaining those episodes one by one`);
       large.unshift(...group.map((g) => g.id));
@@ -342,14 +344,14 @@ export function storedExplanations(store: Store, projectId: string, unitId: stri
   const rows = store.db
     .prepare("SELECT * FROM explanation WHERE project_id = ? AND unit_id = ? AND prompt_version = ? ORDER BY id DESC")
     .all(projectId, unitId, PROMPT_VERSION) as any[];
-  const current = new Map<string, string>();
+  const current = new Map<string, Packet>();
   return rows.map((r) => {
     const depth = (r.depth ?? "thorough") as Depth;
-    if (!current.has(depth)) current.set(depth, buildPacket(store, projectId, unitId, { depth }).hash);
+    if (!current.has(depth)) current.set(depth, buildPacket(store, projectId, unitId, { depth }));
     return {
       unitId, step: Step.parse(JSON.parse(r.content_json)), validation: JSON.parse(r.validation_json), evidence: JSON.parse(r.evidence_json),
       model: r.model, costUsd: r.cost_usd, tokens: rowTokens(r), cached: true, attempts: r.attempts, batched: !!r.batched, packetHash: r.packet_hash,
-      requestedModel: r.requested_model, depth, createdAt: r.created_at, stale: current.get(depth) !== r.packet_hash,
+      requestedModel: r.requested_model, depth, createdAt: r.created_at, stale: !packetMatches(current.get(depth)!, r.packet_hash),
     };
   });
 }

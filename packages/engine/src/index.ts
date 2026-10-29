@@ -7,3 +7,4 @@ export * from "./explain.ts";
 export * from "./render.ts";
 export * from "./facts.ts";
 export * from "./memory.ts";
+export * from "./wiki.ts";

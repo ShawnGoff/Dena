@@ -295,6 +295,31 @@ CREATE TABLE event_label (
 CREATE INDEX event_label_project ON event_label(project_id);
 `,
   },
+  {
+    version: 9,
+    name: "wiki_sections",
+    // L3 wiki sections, generated from project memory and explanations and cached by the exact
+    // brief they were written from. Older rows are kept as history.
+    sql: `
+CREATE TABLE wiki_section (
+  id              INTEGER PRIMARY KEY,
+  project_id      TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  key             TEXT NOT NULL,
+  input_hash      TEXT NOT NULL,
+  prompt_version  INTEGER NOT NULL,
+  requested_model TEXT NOT NULL DEFAULT '',
+  model           TEXT,
+  attempts        INTEGER NOT NULL DEFAULT 1,
+  content_json    TEXT NOT NULL,
+  validation_json TEXT NOT NULL,
+  sources_json    TEXT NOT NULL,
+  cost_usd        REAL,
+  created_at      TEXT NOT NULL,
+  UNIQUE (project_id, key, input_hash, prompt_version, requested_model)
+);
+CREATE INDEX wiki_section_key ON wiki_section(project_id, key, id);
+`,
+  },
 ];
 
 export function migrate(db: Database.Database): number {

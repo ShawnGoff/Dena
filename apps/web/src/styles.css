@@ -275,3 +275,8 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .chip { font: 500 11px var(--mono); border: 1px solid var(--line-strong); background: var(--bg-raised); color: var(--text-dim); border-radius: 999px; padding: 1px 7px; cursor: pointer; }
 .chip:hover { color: var(--accent); border-color: var(--accent); }
+
+/* Wiki sources */
+.source { display: grid; grid-template-columns: 40px 1fr; gap: 8px; padding: 8px 10px; border-radius: 8px; font-size: 13.5px; line-height: 1.6; border: 1px solid transparent; }
+.source.focused { background: var(--accent-soft); border-color: rgba(139, 156, 255, 0.35); }
+.side-label + .toc-item, .toc .side-label { margin-top: 4px; }

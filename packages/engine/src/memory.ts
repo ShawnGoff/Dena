@@ -174,14 +174,14 @@ function problems(ctx: Ctx): MemoryEntity[] {
   return out;
 }
 
-interface LatestExplanation {
+export interface LatestExplanation {
   unitId: string;
   step: Step;
   evidence: Record<string, { eventIds: number[] }>;
   model: string | null;
 }
 
-function latestExplanations(store: Store, projectId: string): LatestExplanation[] {
+export function latestExplanations(store: Store, projectId: string): LatestExplanation[] {
   const rows = store.db
     .prepare(`SELECT unit_id, content_json, evidence_json, model FROM explanation e
               WHERE project_id = ? AND id = (SELECT MAX(id) FROM explanation x WHERE x.project_id = e.project_id AND x.unit_id = e.unit_id)`)

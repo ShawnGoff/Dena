@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { correlate, displaySummary, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
-import { buildPacket, claudeAuthStatus, ensureMemory, loadMemory, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
+import { buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
 import { startServer } from "@dena/server";
 
@@ -39,6 +39,8 @@ const USAGE = `dena <command>
   guide build <project> [--from N] [--to N] [--model M] [--depth D] [--max-usd X] [--yes]
                                  explain many episodes in as few calls as possible; shows an estimate first
   memory <project> [--rebuild]   project memory: components, problems and fixes, decisions, concepts, unknowns
+  wiki <project> [section] [--model M] [--force] [--out FILE]
+                                 list the wiki pages, or write one (overview, architecture, component:<folder>)
   serve [--port N]               open Dena's interface in your browser (local only; the printed link carries a one-time key)
   config <project> [key value]   show or set: model (e.g. haiku, sonnet; "default" = your Claude Code default),
                                  depth (concise|thorough), max-usd (per batch run; "none" to clear),
@@ -296,6 +298,26 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         console.log(`\nDecisions (${decs.length}) · Concepts (${cons.length}) · Unknowns (${qs.length})`);
         for (const d of decs.slice(0, 4)) console.log(`  [${(d.data as any).claimKind}] ${d.title.slice(0, 100)}`);
         console.log(`\nDecisions, concepts and unknowns come from explained episodes; explain more episodes to fill them in.`);
+        break;
+      }
+      case "wiki": {
+        const p = project(store, args[0]);
+        const key = args[1] && !args[1].startsWith("--") ? (args[1] as SectionKey) : null;
+        if (!key) {
+          for (const s of sectionKeys(store, p.id)) {
+            const b = buildBrief(store, p.id, s.key);
+            const st = storedSection(store, p.id, s.key, b.hash);
+            console.log(`${s.key.padEnd(32)} ${String(b.sources.length).padStart(3)} sources  ${st ? (st.stale ? "written, outdated" : `written by ${st.model}`) : "not written"}`);
+          }
+          break;
+        }
+        if (!sectionKeys(store, p.id).some((s) => s.key === key)) throw new Error(`No page "${key}". Run: dena wiki ${p.name}`);
+        const s = await generateSection(store, p.id, key, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account" }),
+          { model: flag("model"), force: args.includes("--force"), log: (m) => console.error(`· ${m}`) });
+        const md = renderWikiMarkdown(s);
+        if (flag("out")) fs.writeFileSync(flag("out")!, md);
+        else console.log(md);
+        console.error(`· ${s.cached ? "cached" : `written in ${s.attempts} call${s.attempts > 1 ? "s" : ""}`}; ${s.validation.ok ? "passed checks" : "problems remain (shown on the page)"}`);
         break;
       }
       case "serve": {

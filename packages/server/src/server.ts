@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { displaySummary, effectiveTest, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, Recorder } from "@dena/adapters";
-import { ClaudeCodeProvider, claudeAuthStatus, ensureMemory, loadMemory, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
+import { buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
 
 /**
  * Dena's local server: a JSON API over the store plus the built web UI.
@@ -163,6 +163,41 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       return { components: of("component"), problems: of("problem").sort((a, b) => b.sortKey - a.sortKey), decisions: of("decision"),
         concepts: of("concept"), questions: of("question"), episodes: eps,
         explainedEpisodes: (store.db.prepare("SELECT COUNT(DISTINCT unit_id) n FROM explanation WHERE project_id = ?").get(p.id) as { n: number }).n };
+    }
+
+    if (sub[0] === "wiki" && sub.length === 1 && method === "GET") {
+      return sectionKeys(store, p.id).map((s) => {
+        const brief = buildBrief(store, p.id, s.key);
+        const stored = storedSection(store, p.id, s.key, brief.hash);
+        return { ...s, sources: brief.sources.length, chars: brief.chars, generated: !!stored, stale: stored?.stale ?? false, model: stored?.model ?? null };
+      });
+    }
+
+    if (sub[0] === "wiki" && sub[1] === "section") {
+      const key = (method === "GET" ? url.searchParams.get("key") : body?.key) as SectionKey | null;
+      if (!key || !sectionKeys(store, p.id).some((s) => s.key === key)) throw new HttpError(404, "No such section");
+      if (method === "GET") {
+        const brief = buildBrief(store, p.id, key);
+        const settings = store.projectSettings(p.id);
+        return { section: storedSection(store, p.id, key, brief.hash), brief: { sources: brief.sources.length, chars: brief.chars }, settings: { model: settings.model ?? null } };
+      }
+      if (method !== "POST") throw new HttpError(405, "Method not allowed");
+      const model = body?.model ?? undefined;
+      if (model !== undefined && (typeof model !== "string" || !MODEL_NAME.test(model))) throw new HttpError(400, "Invalid model name");
+      const flight = `${p.id}:wiki:${key}`;
+      if (inFlight.has(flight)) throw new HttpError(409, "This page is already being written");
+      const job = generateSection(store, p.id, key, getProvider(p.id), { model, force: body?.force === true, log: (m) => log(`[${p.name}] wiki ${key}: ${m}`) });
+      inFlight.set(flight, job);
+      try {
+        const s = await job;
+        return { key, cached: s.cached, ok: s.validation.ok, model: s.model };
+      } catch (e) {
+        const msg = (e as Error).message;
+        log(`[${p.name}] wiki ${key} failed: ${msg}`);
+        throw new HttpError(502, /^(Claude Code|Claude is|Your Anthropic|No valid API key|There is no captured)/.test(msg) ? msg : "The model call failed. Check Claude Code's sign-in, then try again.");
+      } finally {
+        inFlight.delete(flight);
+      }
     }
 
     if (sub[0] === "auth" && method === "GET") {

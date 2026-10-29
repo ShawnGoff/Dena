@@ -413,10 +413,12 @@ describe("updates and export", () => {
     name = "flaky";
     calls = 0;
     constructor(private readonly failures: string[]) {}
-    async generate(): Promise<GenerateResult> {
+    async generate(_s: string, _u: string, schema: any): Promise<GenerateResult> {
       const f = this.failures[this.calls++];
       if (f) throw new Error(f);
-      return { json: goodStep(), model: "fake", costUsd: 0.01, durationMs: 1 };
+      // The queue updates written steps in a targeted way; answer that shape when asked for it.
+      const json = schema?.properties?.updates ? { title: goodStep().title, summary: goodStep().summary, updates: [], remove: [], uncertainty: [] } : goodStep();
+      return { json, model: "fake", costUsd: 0.01, durationMs: 1 };
     }
   }
 
@@ -441,7 +443,10 @@ describe("updates and export", () => {
     clock += 11_000;
     const second = await processDueJobs(store, pid, flaky, { now: () => clock });
     expect(second.done).toBe(1);
-    expect(listJobs(store, pid)[0]).toMatchObject({ status: "done", result: "updated" });
+    expect(listJobs(store, pid)[0]).toMatchObject({ status: "done" });
+    expect(listJobs(store, pid)[0]!.result).toMatch(/^update waiting for your review: 0 added, 0 changed, 0 removed, \d+ kept$/);
+    expect(proposedRevision(store, pid, "step", id)!.meta.targeted).toBe(true);
+    expect(findOutdated(store, pid)).toMatchObject([{ waiting: true }]); // reviewed by the owner, not queued again
   });
 
   it("does not retry sign-in problems, and keeps the owner's edits as a proposal", async () => {
@@ -456,7 +461,8 @@ describe("updates and export", () => {
     enqueue(store, pid, [{ type: "step", key: id }]);
     await processDueJobs(store, pid, new Flaky([]));
     expect(activeRevision(store, pid, "step", id)!.content.summary).toBe("Mine");
-    expect(listJobs(store, pid)[0]!.result).toContain("waiting as a proposal");
+    expect(listJobs(store, pid)[0]!.result).toContain("waiting for your review");
+    expect(proposedRevision(store, pid, "step", id)!.content.summary).toBe("Mine"); // the owner's summary carried into the proposal
   });
 
   it("exports the current versions, marking the owner's edits and corrections", async () => {

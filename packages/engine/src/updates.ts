@@ -1,9 +1,10 @@
 import type { Store } from "@dena/core";
 import { loadEpisodes } from "./episodes.ts";
 import { explainEpisode } from "./explain.ts";
+import { updateSection, updateStep } from "./targeted.ts";
 import { buildPacket, packetMatches } from "./packet.ts";
 import type { Provider } from "./provider.ts";
-import { activeRevision, notesFor, revisions, type DocType } from "./revisions.ts";
+import { activeRevision, notesFor, proposedRevision, revisions, type DocType } from "./revisions.ts";
 import { buildBrief, generateSection, sectionKeys, type SectionKey } from "./wiki.ts";
 
 /**
@@ -21,6 +22,8 @@ export interface Outdated {
   reason: string;
   userEdited: boolean;
   chars: number;
+  /** An update for the current evidence is already waiting for the owner's review. */
+  waiting: boolean;
 }
 
 export function findOutdated(store: Store, projectId: string): Outdated[] {
@@ -33,15 +36,17 @@ export function findOutdated(store: Store, projectId: string): Outdated[] {
     // Notes count as new if the AI has not written a version since they were added.
     const lastWritten = revisions(store, projectId, "step", e.id).find((r) => r.origin === "generated")?.createdAt ?? rev.createdAt;
     const notes = notesFor(store, projectId, "step", e.id).filter((n) => n.createdAt > lastWritten).length;
-    out.push({ type: "step", key: e.id, title: `#${e.position} ${e.title}`, reason: notes ? `${notes} new note${notes > 1 ? "s" : ""} from you` : "new evidence",
-      userEdited: !!rev.meta.userEdited, chars: packet.chars });
+    const waiting = packetMatches(packet, proposedRevision(store, projectId, "step", e.id)?.meta.packetHash);
+    out.push({ type: "step", key: e.id, title: `#${e.position} ${e.title}`, reason: waiting ? "an update is waiting for your review" : notes ? `${notes} new note${notes > 1 ? "s" : ""} from you` : "new evidence",
+      userEdited: !!rev.meta.userEdited, chars: packet.chars, waiting });
   }
   for (const s of sectionKeys(store, projectId)) {
     const rev = activeRevision(store, projectId, "wiki", s.key);
     if (!rev) continue;
     const brief = buildBrief(store, projectId, s.key);
     if (brief.hash === rev.meta.inputHash) continue;
-    out.push({ type: "wiki", key: s.key, title: s.title, reason: "new evidence", userEdited: !!rev.meta.userEdited, chars: brief.chars });
+    const waiting = proposedRevision(store, projectId, "wiki", s.key)?.meta.inputHash === brief.hash;
+    out.push({ type: "wiki", key: s.key, title: s.title, reason: waiting ? "an update is waiting for your review" : "new evidence", userEdited: !!rev.meta.userEdited, chars: brief.chars, waiting });
   }
   return out;
 }
@@ -126,14 +131,21 @@ export async function processDueJobs(store: Store, projectId: string, provider: 
     set.run("running", job.attempts + 1, job.nextAt, null, null, stamp(), job.id);
     try {
       let summary: string;
-      if (job.type === "step") {
+      // A written document gets a targeted update (kept statements stay; the result waits for
+      // review); one never written is written in full.
+      const written = !!activeRevision(store, projectId, job.type, job.key);
+      if (written) {
+        const u = job.type === "step" ? await updateStep(store, projectId, job.key, provider, { log }) : await updateSection(store, projectId, job.key as SectionKey, provider, { log });
+        result.spentUsd += u.costUsd;
+        summary = `update waiting for your review: ${u.diff.added.length} added, ${u.diff.changed.length} changed, ${u.diff.removed.length} removed, ${u.diff.kept} kept${u.ok ? "" : " (with check problems)"}`;
+      } else if (job.type === "step") {
         const x = await explainEpisode(store, projectId, job.key, provider, { force: true, log });
         result.spentUsd += x.costUsd ?? 0;
-        summary = `${x.validation.ok ? "updated" : "updated, with check problems"}${activeRevision(store, projectId, "step", job.key)?.meta.userEdited ? " (waiting as a proposal: you had edited it)" : ""}`;
+        summary = x.validation.ok ? "written" : "written, with check problems";
       } else {
         const s = await generateSection(store, projectId, job.key as SectionKey, provider, { force: true, log });
         result.spentUsd += s.costUsd ?? 0;
-        summary = `${s.validation.ok ? "updated" : "updated, with check problems"}${activeRevision(store, projectId, "wiki", job.key)?.meta.userEdited ? " (waiting as a proposal: you had edited it)" : ""}`;
+        summary = s.validation.ok ? "written" : "written, with check problems";
       }
       set.run("done", job.attempts + 1, job.nextAt, null, summary, stamp(), job.id);
       result.done++;

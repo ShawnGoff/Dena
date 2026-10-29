@@ -78,6 +78,15 @@ export function recordGenerated(store: Store, projectId: string, type: DocType, 
     baseId: active?.id ?? null, note: protect ? "AI update written while your edited version was active" : null });
 }
 
+/**
+ * Records an AI update for the owner to review before it is shown: a targeted update always
+ * waits as a proposal, with what it adds, changes and removes in `meta.diff`.
+ */
+export function recordProposed(store: Store, projectId: string, type: DocType, key: string, content: unknown, meta: Record<string, any>, note: string): Revision {
+  const active = activeRevision(store, projectId, type, key);
+  return insert(store, projectId, type, key, { origin: "generated", status: "proposed", content, meta, baseId: active?.id ?? null, note });
+}
+
 /** Saves the owner's edit. `baseId` must be the active revision they edited (optimistic concurrency). */
 export function saveUserEdit(store: Store, projectId: string, type: DocType, key: string, content: unknown, baseId: number, note?: string): Revision {
   const active = activeRevision(store, projectId, type, key);
@@ -90,7 +99,8 @@ export function adoptProposed(store: Store, projectId: string, type: DocType, ke
   const p = revisions(store, projectId, type, key).find((r) => r.id === id && r.status === "proposed");
   if (!p) throw new Error("That AI update is no longer waiting");
   store.db.prepare("UPDATE doc_revision SET status = 'superseded' WHERE id = ?").run(id);
-  return insert(store, projectId, type, key, { origin: "generated", status: "active", content: p.content, meta: { ...p.meta, userEdited: false }, baseId: id,
+  // A targeted update keeps the owner's edited statements, so the adopted version still holds their work.
+  return insert(store, projectId, type, key, { origin: "generated", status: "active", content: p.content, meta: { ...p.meta, userEdited: p.meta.targeted ? !!p.meta.userEdited : false }, baseId: id,
     note: "AI update adopted by the owner" });
 }
 

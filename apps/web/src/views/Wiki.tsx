@@ -156,7 +156,8 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
           </span>
         </div>
       )}
-      {doc.active && <DocBar projectId={projectId} type="wiki" docKey={pageKey} doc={doc} onChanged={load} viewing={viewing} onView={setViewing} allowContext={false} />}
+      {doc.active && <DocBar projectId={projectId} type="wiki" docKey={pageKey} doc={doc} onChanged={() => { load(); onWritten(); }} viewing={viewing} onView={setViewing} allowContext={false}
+        onRewrite={() => write(runModel || undefined, true)} projectModel={r.settings.model} />}
       {s && (
         <article className="step">
           <h2 className="step-title">{s.section.title}</h2>
@@ -164,10 +165,6 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
             <b>Written by AI from captured evidence. It can be wrong.</b> Each statement is labeled and cites sources like <span className="ref static">S3</span>.
             A source is a <b>fact</b> Dena counted from captured events, or a <b>claim</b> from an episode's explanation; each lists the events behind it.
           </div>
-          {s.stale && (
-            <div className="notice" style={{ marginBottom: 14 }}>New evidence has been captured since this page was written.{" "}
-              <button className="btn" disabled={!!busy} onClick={() => write(undefined, true)}>{busy ? "Rewriting…" : "Rewrite with new evidence"}</button></div>
-          )}
           <p className="step-summary">{s.section.summary}</p>
           {s.section.sections.map((sec) => (
             <section key={sec.heading} className="step-section">

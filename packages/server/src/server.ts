@@ -4,7 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { displaySummary, effectiveTest, type StoredEvent, type Store } from "@dena/core";
-import { git, hookInstall, Recorder } from "@dena/adapters";
+import { git, hookInstall, lastHeartbeat, liveRecorder, Recorder, type RecorderOptions } from "@dena/adapters";
 import { cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, WikiSection, type DocType,
@@ -28,6 +28,8 @@ export interface ServerOptions {
   log?: (m: string) => void;
   /** Model backend for explanations; defaults to the user's Claude Code. Injectable for tests. */
   provider?: Provider;
+  /** Options for recorders this server starts (e.g. where to find Claude Code transcripts). */
+  recorder?: Omit<RecorderOptions, "log">;
 }
 
 /** Model names reach a command line, so only plain names and aliases are accepted ("haiku", "claude-sonnet-5-5"). */
@@ -86,6 +88,33 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     runners.set(projectId, job);
   };
   recoverJobs(store);
+
+  // A project left "recording" with no live recorder (the last Dena process exited without a clean
+  // shutdown) is resumed here: recording was the owner's last choice, and the screen must not say
+  // "recording" while nothing captures. The gap is recorded from the last heartbeat.
+  const resumeLeftOn = async () => {
+    for (const p of store.listProjects()) {
+      if (p.recordingState === "stopped" || recorders.has(p.id) || liveRecorder(store, p.id)) continue;
+      const hb = lastHeartbeat(store, p.id);
+      if (hb) store.setCursor(p.id, "dena", "last_stopped_at", hb.at);
+      const wasPaused = p.recordingState === "paused";
+      const rec = new Recorder(store, p.id, { ...opts.recorder, log: (m) => log(`[${p.name}] ${m}`) });
+      recorders.set(p.id, rec);
+      try {
+        await rec.start();
+        if (wasPaused) store.setRecordingState(p.id, "paused");
+        log(`[${p.name}] ${wasPaused ? "recorder restored (still paused)" : "recording resumed"}: it was left on when Dena last stopped`);
+      } catch (e) {
+        recorders.delete(p.id);
+        log(`[${p.name}] could not resume recording: ${(e as Error).message}`);
+      }
+    }
+  };
+  const recorderState = (projectId: string) => {
+    const here = recorders.has(projectId);
+    const elsewhere = !here ? liveRecorder(store, projectId) : null;
+    return { recorderRunning: here || !!elsewhere, recorderHere: here, recorderElsewherePid: elsewhere?.pid ?? null };
+  };
   for (const p of store.listProjects())
     if (store.db.prepare("SELECT 1 FROM update_job WHERE project_id = ? AND status = 'queued'").get(p.id)) setTimeout(() => runUpdates(p.id), 2_000);
   /** A provider per call, so each project's sign-in setting applies. */
@@ -115,7 +144,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
   async function api(method: string, parts: string[], url: URL, body: any): Promise<unknown> {
     // /api/projects
     if (parts.length === 1 && parts[0] === "projects" && method === "GET")
-      return store.listProjects().map((p) => ({ ...p, recorderRunning: recorders.has(p.id), stats: store.stats(p.id) }));
+      return store.listProjects().map((p) => ({ ...p, ...recorderState(p.id), stats: store.stats(p.id) }));
     if (parts[0] !== "projects" || !parts[1]) throw new HttpError(404, "Not found");
     const p = project(parts[1]);
     const sub = parts.slice(2);
@@ -125,7 +154,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       const explained = (store.db.prepare("SELECT COUNT(DISTINCT unit_id) n FROM explanation WHERE project_id = ?").get(p.id) as { n: number }).n;
       const episodes = loadEpisodes(store, p.id);
       return {
-        project: { ...p, recorderRunning: recorders.has(p.id) },
+        project: { ...p, ...recorderState(p.id) },
         settings: store.projectSettings(p.id),
         stats: store.stats(p.id),
         sources: {
@@ -361,8 +390,10 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       const action = body?.action;
       const running = recorders.get(p.id);
       if (action === "start") {
-        if (running) return { state: store.getProject(p.id)!.recordingState };
-        const rec = new Recorder(store, p.id, { log: (m) => log(`[${p.name}] ${m}`) });
+        if (running) return { state: store.getProject(p.id)!.recordingState, ...recorderState(p.id) };
+        const other = liveRecorder(store, p.id);
+        if (other) throw new HttpError(409, `This project is already being recorded by another Dena process (pid ${other.pid}). Stop that one first.`);
+        const rec = new Recorder(store, p.id, { ...opts.recorder, log: (m) => log(`[${p.name}] ${m}`) });
         recorders.set(p.id, rec);
         await rec.start();
       } else if (action === "pause" || action === "resume") {
@@ -374,7 +405,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
           await running.stop();
         }
       } else throw new HttpError(400, "action must be start, pause, resume or stop");
-      return { state: store.getProject(p.id)!.recordingState, recorderRunning: recorders.has(p.id) };
+      return { state: store.getProject(p.id)!.recordingState, ...recorderState(p.id) };
     }
 
     throw new HttpError(404, "Not found");
@@ -436,6 +467,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     server.listen(port, "127.0.0.1", () => resolve());
   });
   port = (server.address() as { port: number }).port;
+  await resumeLeftOn();
   return {
     url: `http://127.0.0.1:${port}/#t=${token}`,
     port,

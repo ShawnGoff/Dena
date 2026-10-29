@@ -42,6 +42,8 @@ export interface Project {
   rootPath: string;
   recordingState: "recording" | "paused" | "stopped";
   recorderRunning: boolean;
+  recorderHere?: boolean;
+  recorderElsewherePid?: number | null;
   stats?: Stats;
 }
 export interface Stats {

@@ -16,6 +16,7 @@ export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId
   const count = (t: string) => o.stats.byType.find((x) => x.type === t)?.n ?? 0;
   const total = o.stats.byType.reduce((n, x) => n + x.n, 0);
   const unknown = o.stats.byActor.find((a) => a.actor === "unknown")?.n ?? 0;
+  const live = o.project.recorderRunning && o.project.recordingState === "recording";
   // The same limitation recorded once per session reads better as one line with a count.
   const groups = [...o.gaps.reduce((m, g) => {
     const key = `${g.source}|${g.reason}`;
@@ -38,11 +39,13 @@ export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId
       <div className="grid cols-2">
         <div className="card">
           <h2>Capture sources</h2>
-          <Source ok label="Claude Code transcripts" detail="Prompts, AI replies, tool calls, edits with diffs, test runs" />
-          <Source ok={o.sources.hooksProject || o.sources.hooksUser} label="Claude Code live hooks"
-            detail={o.sources.hooksProject || o.sources.hooksUser ? `Installed (${o.sources.hooksProject ? "this folder" : "all sessions"}): exit codes, timings, agent notes` : "Not installed — run: dena hooks install"} />
-          <Source ok={o.sources.git} label="Git" detail={o.sources.git ? "Commits, diffs, branch switches" : "This folder is not a git repository"} />
-          <Source ok={o.project.recorderRunning} label="File watcher" detail={o.project.recorderRunning ? "Watching for changes" : "Runs while recording; changes made meanwhile are found on the next start"} />
+          {/* "live" only while a recorder is actually running; "ready" means set up but not capturing right now. */}
+          <Source status={live ? "live" : "ready"} label="Claude Code transcripts" detail="Prompts, AI replies, tool calls, edits with diffs, test runs" />
+          <Source status={!(o.sources.hooksProject || o.sources.hooksUser) ? "off" : live ? "live" : "ready"} label="Claude Code live hooks"
+            detail={o.sources.hooksProject || o.sources.hooksUser ? `Installed (${o.sources.hooksProject ? "this folder" : "all sessions"}): exit codes, timings, agent notes${live ? "" : ". Hook data waits and is imported when recording runs"}` : "Not installed — run: dena hooks install"} />
+          <Source status={!o.sources.git ? "off" : live ? "live" : "ready"} label="Git" detail={o.sources.git ? "Commits, diffs, branch switches" : "This folder is not a git repository"} />
+          <Source status={live ? "live" : "off"} label="File watcher" detail={live ? "Watching for changes" : "Runs while recording; changes made meanwhile are found on the next start"} />
+          {!live && <p className="faint" style={{ fontSize: 12.5 }}>Nothing is being captured right now{o.project.recordingState !== "stopped" ? ", although recording was left on. Use Start recording above to resume" : ". Use Start recording above"}.</p>}
           {unknown > 0 && <p className="faint" style={{ fontSize: 12.5, marginBottom: 0 }}>{unknown} events have an unknown author: Dena saw the change but no source recorded who made it.</p>}
         </div>
         <div className="card">
@@ -82,10 +85,10 @@ export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId
   );
 }
 
-function Source({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
+function Source({ status, label, detail }: { status: "live" | "ready" | "off"; label: string; detail: string }) {
   return (
     <div className="source-row">
-      <Badge tone={ok ? "ok" : "muted"}>{ok ? "on" : "off"}</Badge>
+      <Badge tone={status === "live" ? "ok" : status === "ready" ? "warn" : "muted"}>{status === "live" ? "live" : status === "ready" ? "ready" : "off"}</Badge>
       <div className="grow">
         <div>{label}</div>
         <div className="faint" style={{ fontSize: 12.5 }}>{detail}</div>

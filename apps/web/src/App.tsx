@@ -129,17 +129,21 @@ function Recording({ project, onChange }: { project: Project; onChange: () => vo
     }
   };
   const s = project.recordingState;
-  const elsewhere = s !== "stopped" && !project.recorderRunning;
+  // Another Dena process is recording this project (its heartbeat is fresh). Pause and resume still
+  // work across processes; stopping is done where it runs.
+  const elsewhere = project.recorderRunning && !project.recorderHere;
+  // Marked as recording, but no recorder is alive anywhere: offer to resume rather than claim it is on.
+  const leftOn = s !== "stopped" && !project.recorderRunning;
   return (
     <div className="rec">
-      <span className={`pill ${s}`} title={elsewhere ? "A recorder started from the command line is running" : undefined}>
+      <span className={`pill ${leftOn ? "stopped" : s}`} title={elsewhere ? `Recording in another Dena process (pid ${project.recorderElsewherePid})` : undefined}>
         <span className="dot" />
-        {s === "recording" ? "Recording" : s === "paused" ? "Paused — nothing is captured" : "Not recording"}
+        {leftOn ? "Not recording (was left on)" : s === "recording" ? `Recording${elsewhere ? " in another window" : ""}` : s === "paused" ? "Paused — nothing is captured" : "Not recording"}
       </span>
-      {s === "stopped" && <button className="btn primary" disabled={busy} onClick={() => act("start")}>Start recording</button>}
-      {s === "recording" && !elsewhere && <button className="btn" disabled={busy} onClick={() => act("pause")}>Pause</button>}
-      {s === "paused" && !elsewhere && <button className="btn" disabled={busy} onClick={() => act("resume")}>Resume</button>}
-      {s !== "stopped" && !elsewhere && <button className="btn danger" disabled={busy} onClick={() => act("stop")}>Stop</button>}
+      {(s === "stopped" || leftOn) && <button className="btn primary" disabled={busy} onClick={() => act("start")}>{leftOn ? "Resume recording" : "Start recording"}</button>}
+      {s === "recording" && !leftOn && <button className="btn" disabled={busy} onClick={() => act("pause")}>Pause</button>}
+      {s === "paused" && !leftOn && <button className="btn" disabled={busy} onClick={() => act("resume")}>Resume</button>}
+      {s !== "stopped" && !leftOn && !elsewhere && <button className="btn danger" disabled={busy} onClick={() => act("stop")}>Stop</button>}
       {err && <span className="badge bad">{err}</span>}
     </div>
   );

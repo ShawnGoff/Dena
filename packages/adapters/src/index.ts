@@ -3,4 +3,4 @@ export * as git from "./git/git.ts";
 export * as hooks from "./claude-code/hooks.ts";
 export * as hookInstall from "./claude-code/install.ts";
 export { FsCapture } from "./fs/watcher.ts";
-export { Recorder, importChangedTranscripts, importGitIfChanged, transcriptFiles } from "./recorder.ts";
+export { type RecorderOptions, Recorder, importChangedTranscripts, importGitIfChanged, transcriptFiles, liveRecorder, lastHeartbeat, HEARTBEAT_TTL_MS } from "./recorder.ts";

@@ -191,3 +191,50 @@ describe("document revisions API", () => {
     expect((await req(q)).json.active.content.summary).toBe(d.active.content.summary);
   });
 });
+
+describe("recording left on", () => {
+  it("resumes a project marked recording when no recorder is alive, recording the gap from the last heartbeat", async () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), "dena-resume-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dena-resume-root-"));
+    const s = new Store(h);
+    const p = s.createProject("left-on", root);
+    s.setRecordingState(p.id, "recording");
+    const lastBeat = new Date(Date.now() - 10 * 60_000).toISOString();
+    s.setCursor(p.id, "dena", "recorder_heartbeat", JSON.stringify({ pid: 99999, at: lastBeat }));
+    const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), "dena-noclaude-")); // keep the test away from real transcripts
+    const srv2 = await startServer(s, { port: 0, webDir: web, provider: fake, recorder: { claudeHome } });
+    const r = await new Promise<any>((resolve) => {
+      http.get({ host: "127.0.0.1", port: srv2.port, path: "/api/projects", headers: { host: `127.0.0.1:${srv2.port}`, "x-dena-token": srv2.token } }, (res) => {
+        let t = "";
+        res.on("data", (c) => (t += c));
+        res.on("end", () => resolve(JSON.parse(t)));
+      });
+    });
+    expect(r[0]).toMatchObject({ recordingState: "recording", recorderRunning: true, recorderHere: true });
+    expect(s.gaps(p.id).some((g) => g.source === "dena" && g.fromTime === lastBeat)).toBe(true);
+    await srv2.close();
+    expect(s.getProject(p.id)!.recordingState).toBe("stopped"); // a clean shutdown records it
+    s.close();
+    for (const d of [h, root]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  it("leaves a project alone when another live recorder is beating", async () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), "dena-live-"));
+    const s = new Store(h);
+    const p = s.createProject("busy", "/nonexistent/busy");
+    s.setRecordingState(p.id, "recording");
+    s.setCursor(p.id, "dena", "recorder_heartbeat", JSON.stringify({ pid: 4242, at: new Date().toISOString() }));
+    const srv2 = await startServer(s, { port: 0, webDir: web, provider: fake });
+    const r = await new Promise<any>((resolve) => {
+      http.get({ host: "127.0.0.1", port: srv2.port, path: "/api/projects", headers: { host: `127.0.0.1:${srv2.port}`, "x-dena-token": srv2.token } }, (res) => {
+        let t = "";
+        res.on("data", (c) => (t += c));
+        res.on("end", () => resolve(JSON.parse(t)));
+      });
+    });
+    expect(r[0]).toMatchObject({ recorderRunning: true, recorderHere: false, recorderElsewherePid: 4242 });
+    await srv2.close();
+    s.close();
+    fs.rmSync(h, { recursive: true, force: true });
+  });
+});

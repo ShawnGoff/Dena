@@ -151,10 +151,12 @@ async function main() {
           const done = () => {
             process.off("SIGINT", done);
             process.off("SIGTERM", done);
+            process.off("SIGHUP", done);
             resolve();
           };
           process.on("SIGINT", done);
           process.on("SIGTERM", done);
+          process.on("SIGHUP", done);
         });
         await rec.stop();
         console.log(`\n■ Stopped. ${JSON.stringify(store.stats(p.id).byType.slice(0, 6))}`);
@@ -335,8 +337,10 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         const srv = await startServer(store, { port: flag("port") ? Number(flag("port")) : 4600, log: (m) => console.log(`${new Date().toTimeString().slice(0, 8)}  ${m}`) });
         console.log(`Dena is running at:\n\n  ${srv.url}\n\nOnly this computer can reach it, and only with the key in that link. Ctrl-C to stop (stops any recording started here).`);
         await new Promise<void>((resolve) => {
+          // Closing the terminal tab (SIGHUP) stops cleanly too, so recording state is never left wrong.
           process.once("SIGINT", resolve);
           process.once("SIGTERM", resolve);
+          process.once("SIGHUP", resolve);
         });
         await srv.close();
         break;

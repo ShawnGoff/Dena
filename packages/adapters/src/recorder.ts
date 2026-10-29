@@ -80,6 +80,35 @@ export function importGitIfChanged(store: Store, projectId: string, root: string
   return r.eventsInserted;
 }
 
+/** How long a recorder's heartbeat stays believable. Recorders beat every few seconds. */
+export const HEARTBEAT_TTL_MS = 20_000;
+
+export interface Heartbeat {
+  pid: number;
+  at: string;
+}
+
+/** The last heartbeat of a recorder for this project, if one is recent enough to mean it is running. */
+export function liveRecorder(store: Store, projectId: string, now = Date.now()): Heartbeat | null {
+  const raw = store.getCursor(projectId, "dena", "recorder_heartbeat");
+  if (!raw) return null;
+  try {
+    const hb = JSON.parse(raw) as Heartbeat;
+    return now - Date.parse(hb.at) <= HEARTBEAT_TTL_MS ? hb : null;
+  } catch {
+    return null;
+  }
+}
+
+export function lastHeartbeat(store: Store, projectId: string): Heartbeat | null {
+  const raw = store.getCursor(projectId, "dena", "recorder_heartbeat");
+  try {
+    return raw ? (JSON.parse(raw) as Heartbeat) : null;
+  } catch {
+    return null;
+  }
+}
+
 export class Recorder {
   private fs: FsCapture | null = null;
   private timer: NodeJS.Timeout | null = null;
@@ -112,6 +141,7 @@ export class Recorder {
       events: [], artifacts: [], links: [], gaps: [] });
     this.store.setRecordingState(this.projectId, "recording");
     this.state = "recording";
+    this.beat();
     this.startFs();
     await this.tick();
     this.timer = setInterval(() => void this.tick(), this.opts.pollMs ?? 5_000);
@@ -143,6 +173,7 @@ export class Recorder {
     if (this.busy) return;
     this.busy = true;
     try {
+      this.beat();
       const wanted = this.store.getProject(this.projectId)?.recordingState ?? "stopped";
       if (wanted === "paused" && this.state === "recording") {
         this.fs?.stop();
@@ -171,6 +202,11 @@ export class Recorder {
     }
   }
 
+  /** Tells other Dena processes this recorder is alive (see liveRecorder). */
+  private beat() {
+    this.store.setCursor(this.projectId, "dena", "recorder_heartbeat", JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+  }
+
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.spoolWatcher?.close();
@@ -186,6 +222,7 @@ export class Recorder {
     this.store.ingest(this.projectId, { sessions: [{ id: this.sessionId, source: "dena.recorder", startedAt: null, endedAt: now }],
       events: [], artifacts: [], links: [], gaps: [] });
     this.store.setCursor(this.projectId, "dena", "last_stopped_at", now);
+    this.store.setCursor(this.projectId, "dena", "recorder_heartbeat", "");
     this.store.setRecordingState(this.projectId, "stopped");
     this.state = "stopped";
   }

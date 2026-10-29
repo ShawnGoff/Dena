@@ -1,7 +1,8 @@
 import { sha256, type Store } from "@dena/core";
 import { loadEpisodes } from "./episodes.ts";
 import { ensureMemory, latestExplanations, loadMemory, type LatestExplanation, type MemoryEntity } from "./memory.ts";
-import type { Provider } from "./provider.ts";
+import { addTokens, type Provider, type TokenUsage } from "./provider.ts";
+import { estimateTokens, type TokenEstimate } from "./tokens.ts";
 import { Claim, ClaimKind } from "./schema.ts";
 import { z } from "zod";
 import { recordGenerated } from "./revisions.ts";
@@ -266,6 +267,7 @@ export interface StoredSection {
   model: string | null;
   requestedModel: string;
   costUsd: number | null;
+  tokens: TokenUsage | null;
   attempts: number;
   createdAt: string;
   stale: boolean;
@@ -279,6 +281,7 @@ export function storedSection(store: Store, projectId: string, key: SectionKey, 
   if (!r) return null;
   return { key, section: WikiSection.parse(JSON.parse(r.content_json)), validation: JSON.parse(r.validation_json), sources: JSON.parse(r.sources_json),
     model: r.model, requestedModel: r.requested_model, costUsd: r.cost_usd, attempts: r.attempts, createdAt: r.created_at,
+    tokens: r.prompt_tokens != null ? { prompt: r.prompt_tokens, output: r.output_tokens ?? 0, cacheRead: r.cache_read_tokens ?? 0 } : null,
     stale: currentHash !== undefined && currentHash !== r.input_hash, cached: true };
 }
 
@@ -301,25 +304,31 @@ export async function generateSection(store: Store, projectId: string, key: Sect
   log(`sending ${brief.sources.length} sources (${brief.chars} chars) to ${provider.name}${model ? ` [${model}]` : ""}`);
   let res = await provider.generate(WIKI_SYSTEM_PROMPT, user, WIKI_JSON_SCHEMA, { model: model || undefined });
   let cost = res.costUsd ?? 0;
+  let tokens: TokenUsage | null = res.tokens ?? null;
+  let sentChars = user.length + WIKI_SYSTEM_PROMPT.length;
   let section = WikiSection.parse(res.json);
   let validation = validateSection(section, brief);
   let attempts = 1;
   if (!validation.ok) {
     const errors = validation.issues.filter((i) => i.severity === "error");
     log(`checks found ${errors.length} problems; one repair call`);
-    res = await provider.generate(WIKI_SYSTEM_PROMPT, `${user}\n\nYour previous answer:\n${JSON.stringify(section)}\n\nFix each problem by correcting the claim, citing the right sources, lowering its kind, or removing it:\n${errors.map((e) => `- [${e.heading}] "${e.claim ?? ""}": ${e.message}`).join("\n")}`,
-      WIKI_JSON_SCHEMA, { model: model || undefined });
+    const repair = `${user}\n\nYour previous answer:\n${JSON.stringify(section)}\n\nFix each problem by correcting the claim, citing the right sources, lowering its kind, or removing it:\n${errors.map((e) => `- [${e.heading}] "${e.claim ?? ""}": ${e.message}`).join("\n")}`;
+    res = await provider.generate(WIKI_SYSTEM_PROMPT, repair, WIKI_JSON_SCHEMA, { model: model || undefined });
     cost += res.costUsd ?? 0;
+    tokens = tokens && res.tokens ? addTokens(tokens, res.tokens) : null;
+    sentChars += repair.length + WIKI_SYSTEM_PROMPT.length;
     section = WikiSection.parse(res.json);
     validation = validateSection(section, brief);
     attempts = 2;
   }
   store.db
-    .prepare(`INSERT OR REPLACE INTO wiki_section (project_id, key, input_hash, prompt_version, requested_model, model, attempts, content_json, validation_json, sources_json, cost_usd, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(projectId, key, brief.hash, WIKI_PROMPT_VERSION, model, res.model, attempts, JSON.stringify(section), JSON.stringify(validation), JSON.stringify(brief.sources), cost, new Date().toISOString());
-  recordGenerated(store, projectId, "wiki", key, section, { model: res.model, requestedModel: model, sources: brief.sources, validation, costUsd: cost, attempts, inputHash: brief.hash });
-  return { key, section, validation, sources: brief.sources, model: res.model, requestedModel: model, costUsd: cost, attempts, createdAt: new Date().toISOString(), stale: false, cached: false };
+    .prepare(`INSERT OR REPLACE INTO wiki_section (project_id, key, input_hash, prompt_version, requested_model, model, attempts, content_json, validation_json, sources_json, cost_usd, created_at,
+              input_chars, prompt_tokens, output_tokens, cache_read_tokens)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(projectId, key, brief.hash, WIKI_PROMPT_VERSION, model, res.model, attempts, JSON.stringify(section), JSON.stringify(validation), JSON.stringify(brief.sources), cost, new Date().toISOString(),
+      sentChars, tokens?.prompt ?? null, tokens?.output ?? null, tokens?.cacheRead ?? null);
+  recordGenerated(store, projectId, "wiki", key, section, { model: res.model, requestedModel: model, sources: brief.sources, validation, costUsd: cost, tokens, attempts, inputHash: brief.hash });
+  return { key, section, validation, sources: brief.sources, model: res.model, requestedModel: model, costUsd: cost, tokens, attempts, createdAt: new Date().toISOString(), stale: false, cached: false };
 }
 
 /** Markdown for one wiki page; the structured section stays the source of truth. */
@@ -338,4 +347,10 @@ export function renderWikiMarkdown(s: StoredSection): string {
       .map((r) => by.get(r)).filter(Boolean).map((x) => `- **${x!.ref}** ${x!.type === "fact" ? "fact" : `${x!.grade.replace("_", "-")} claim`}: ${x!.text} — events ${x!.eventIds.map((i) => `#${i}`).join(", ")}`),
     "", `<sub>Written by ${s.model ?? "unknown model"}${s.costUsd ? ` · est. usage $${s.costUsd.toFixed(3)}` : ""}${s.attempts > 1 ? " · 1 repair" : ""} · ${Math.round(s.validation.groundedShare * 100)}% of project statements reach captured events.</sub>`,
   ].join("\n");
+}
+
+/** Tokens writing one page would use, from its brief and this user's calibration. */
+export function estimateSectionTokens(store: Store, projectId: string, brief: Brief, model?: string): TokenEstimate {
+  const m = model ?? store.projectSettings(projectId).model ?? "";
+  return estimateTokens(store, m, brief.chars + WIKI_SYSTEM_PROMPT.length + 600, 1, "wiki");
 }

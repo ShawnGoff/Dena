@@ -137,6 +137,7 @@ export interface StoredExplanation {
   model: string | null;
   requestedModel: string;
   costUsd: number | null;
+  tokens?: { prompt: number; output: number; cacheRead: number } | null;
   attempts: number;
   batched: boolean;
   depth: "concise" | "thorough";
@@ -145,7 +146,8 @@ export interface StoredExplanation {
 }
 export interface ExplanationInfo {
   explanations: StoredExplanation[];
-  estimate: { episodes: number; cached: number; factsOnly: number; modelCalls: number; inputChars: number; estimatedUsd: number | null; basis: string };
+  estimate: { episodes: number; cached: number; factsOnly: number; modelCalls: number; inputChars: number; estimatedUsd: number | null; basis: string;
+    promptTokens: number; outputTokens: number; tokensLow: number; tokensHigh: number; tokenBasis: string; tokensCalibrated: boolean };
   settings: { model: string | null; depth: "concise" | "thorough" };
   busy: boolean;
 }

@@ -8,7 +8,7 @@ import { git, hookInstall, Recorder } from "@dena/adapters";
 import { cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, WikiSection, type DocType,
-  buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
+  estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
 
 /**
  * Dena's local server: a JSON API over the store plus the built web UI.
@@ -92,7 +92,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
   const getProvider = (projectId: string): Provider => {
     if (opts.provider) return opts.provider;
     try {
-      return new ClaudeCodeProvider(undefined, { auth: store.projectSettings(projectId).auth ?? "account" });
+      return new ClaudeCodeProvider(undefined, { auth: store.projectSettings(projectId).auth ?? "account", effort: store.projectSettings(projectId).effort });
     } catch (e) {
       throw new HttpError(503, (e as Error).message);
     }
@@ -205,7 +205,8 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       if (method === "GET") {
         const brief = buildBrief(store, p.id, key);
         const settings = store.projectSettings(p.id);
-        return { section: storedSection(store, p.id, key, brief.hash), brief: { sources: brief.sources.length, chars: brief.chars }, settings: { model: settings.model ?? null } };
+        return { section: storedSection(store, p.id, key, brief.hash), brief: { sources: brief.sources.length, chars: brief.chars, tokens: estimateSectionTokens(store, p.id, brief) },
+          settings: { model: settings.model ?? null } };
       }
       if (method !== "POST") throw new HttpError(405, "Method not allowed");
       const model = body?.model ?? undefined;
@@ -230,7 +231,13 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       if (method === "GET") {
         const outdated = findOutdated(store, p.id);
         const steps = outdated.filter((o) => o.type === "step").map((o) => o.key);
-        return { outdated, estimate: steps.length ? estimate(store, p.id, steps, { force: true }) : null, jobs: listJobs(store, p.id, 30), running: runners.has(p.id),
+        const est = steps.length ? estimate(store, p.id, steps, { force: true }) : null;
+        const wikiTok = outdated.filter((o) => o.type === "wiki").map((o) => estimateSectionTokens(store, p.id, buildBrief(store, p.id, o.key as SectionKey)));
+        const tokens = { prompt: (est?.promptTokens ?? 0) + wikiTok.reduce((n, t) => n + t.promptTokens, 0),
+          output: (est?.outputTokens ?? 0) + wikiTok.reduce((n, t) => n + t.outputTokens, 0),
+          low: (est?.tokensLow ?? 0) + wikiTok.reduce((n, t) => n + t.low, 0), high: (est?.tokensHigh ?? 0) + wikiTok.reduce((n, t) => n + t.high, 0),
+          calibrated: (est?.tokensCalibrated ?? true) && wikiTok.every((t) => t.calibrated), basis: est?.tokenBasis ?? wikiTok[0]?.basis ?? "" };
+        return { outdated, estimate: est, tokens, jobs: listJobs(store, p.id, 30), running: runners.has(p.id),
           settings: { model: store.projectSettings(p.id).model ?? null, maxUsdPerRun: store.projectSettings(p.id).maxUsdPerRun ?? null } };
       }
       if (method !== "POST") throw new HttpError(405, "Method not allowed");

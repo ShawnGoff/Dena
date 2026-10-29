@@ -4,7 +4,7 @@ import { Badge, Loading } from "../components/Bits";
 import { KIND } from "../components/StepView";
 import { ClaimList } from "../components/ClaimList";
 import { DocBar, type DocResponse } from "../components/DocBar";
-import { when } from "../format";
+import { tokenLine, tokenRange, when } from "../format";
 
 interface PageInfo { key: string; title: string; sources: number; chars: number; generated: boolean; stale: boolean; model: string | null }
 interface Source { ref: string; type: "fact" | "claim"; grade: keyof typeof KIND; text: string; unitId: string | null; eventIds: number[] }
@@ -20,7 +20,8 @@ interface Stored {
   createdAt: string;
   stale: boolean;
 }
-interface SectionResponse { section: Stored | null; brief: { sources: number; chars: number }; settings: { model: string | null } }
+interface SectionResponse { section: Stored | null; brief: { sources: number; chars: number; tokens: { promptTokens: number; outputTokens: number; low: number; high: number; calibrated: boolean; basis: string } };
+  settings: { model: string | null } }
 
 const LABEL = (key: string) => (key === "overview" ? "Overview" : key === "architecture" ? "Architecture" : key.slice("component:".length));
 
@@ -133,7 +134,9 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
       {!doc.active && (
         <div className="explain-card">
           <h2 className="step-title" style={{ marginTop: 0 }}>{LABEL(pageKey)}</h2>
-          <p className="muted">Not written yet. Dena will send {r.brief.sources} sources (about {Math.round(r.brief.chars / 1000)}k characters: facts counted from events, and claims from explained episodes) to <b>{r.settings.model ?? "your default model"}</b>.</p>
+          <p className="muted">Not written yet. Dena will send {r.brief.sources} sources (facts counted from events, and claims from explained episodes) to <b>{r.settings.model ?? "your default model"}</b>:
+            {tokenRange(r.brief.tokens.low, r.brief.tokens.high)} (the high end if the checks ask for a repair).
+            <span className="faint small" style={{ display: "block", marginTop: 4 }}>Token estimate {r.brief.tokens.calibrated ? "" : "uses "}{r.brief.tokens.basis}.</span></p>
           <button className="btn primary" disabled={!!busy} onClick={() => write()}>{busy ? "Writing… this can take a minute" : "Write this page"}</button>
         </div>
       )}
@@ -189,7 +192,7 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
             ))}
           </section>
           <footer className="step-foot">
-            Written by {s.model ?? "unknown model"} · {when(s.createdAt)}{s.costUsd ? ` · est. usage $${s.costUsd.toFixed(3)}` : ""}{s.attempts > 1 ? " · needed 1 repair" : ""} · {Math.round(s.validation.groundedShare * 100)}% of project statements reach captured events
+            Written by {s.model ?? "unknown model"} · {when(s.createdAt)}{tokenLine(rev?.meta.tokens) ? ` · ${tokenLine(rev?.meta.tokens)}` : ""}{s.costUsd ? ` (API-equivalent $${s.costUsd.toFixed(3)})` : ""}{s.attempts > 1 ? " · needed 1 repair" : ""} · {Math.round(s.validation.groundedShare * 100)}% of project statements reach captured events
           </footer>
           <div className="explain-more">
             <span className="muted">Want a more careful page? Stronger models use more of your plan.</span>

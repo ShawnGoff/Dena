@@ -378,6 +378,21 @@ CREATE TABLE update_job (
 CREATE INDEX update_job_queue ON update_job(project_id, status, next_at);
 `,
   },
+  {
+    version: 12,
+    name: "token_usage",
+    // Real token counts reported by each model call. prompt_tokens includes cached reads and
+    // cache writes (Claude Code caches prompts, so input_tokens alone undercounts what was sent).
+    sql: `
+ALTER TABLE explanation ADD COLUMN prompt_tokens INTEGER;
+ALTER TABLE explanation ADD COLUMN output_tokens INTEGER;
+ALTER TABLE explanation ADD COLUMN cache_read_tokens INTEGER;
+ALTER TABLE wiki_section ADD COLUMN input_chars INTEGER;
+ALTER TABLE wiki_section ADD COLUMN prompt_tokens INTEGER;
+ALTER TABLE wiki_section ADD COLUMN output_tokens INTEGER;
+ALTER TABLE wiki_section ADD COLUMN cache_read_tokens INTEGER;
+`,
+  },
 ];
 
 export function migrate(db: Database.Database): number {

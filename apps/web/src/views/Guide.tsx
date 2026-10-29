@@ -3,7 +3,7 @@ import { api, type Claim, type Episode, type ExplanationInfo, type Step, type St
 import { DocBar, type DocResponse } from "../components/DocBar";
 import { Badge, Loading } from "../components/Bits";
 import { StepView } from "../components/StepView";
-import { when } from "../format";
+import { tokenRange, when } from "../format";
 
 const STRONGER = [
   { model: "sonnet", label: "Sonnet" },
@@ -103,7 +103,8 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
   if (!info || !doc) return err ? <div className="error">{err}</div> : <Loading />;
   const est = info.estimate;
   const modelName = info.settings.model ?? "your default model";
-  const cost = est.estimatedUsd !== null ? `about $${est.estimatedUsd.toFixed(3)} est. usage` : "usage estimate not available yet";
+  const cost = `${tokenRange(est.tokensLow, est.tokensHigh)} (the high end if the checks ask for a repair)`
+    + `${est.estimatedUsd !== null ? ` (API-equivalent about $${est.estimatedUsd.toFixed(3)})` : ""}`;
   const s = ep.stats;
   // What to show: an older or proposed version the reader chose to look at, else the active one.
   const shownRev = viewing != null
@@ -131,7 +132,8 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
           {est.factsOnly ? (
             <p className="muted">This episode changed nothing, so Dena can summarise it from the captured messages without using a model.</p>
           ) : (
-            <p className="muted">Not explained yet. Dena will send this episode's evidence (about {Math.round(est.inputChars / 1000)}k characters, secrets removed) to <b>{modelName}</b>: {cost}.</p>
+            <p className="muted">Not explained yet. Dena will send this episode's evidence (secrets removed) to <b>{modelName}</b>: {cost}.
+              <span className="faint small" style={{ display: "block", marginTop: 4 }}>Token estimate {est.tokensCalibrated ? "" : "uses "}{est.tokenBasis}.</span></p>
           )}
           <button className="btn primary" disabled={!!busy} onClick={() => explain()}>{busy ? "Explaining… this can take a minute" : est.factsOnly ? "Summarise" : "Explain this episode"}</button>
         </div>
@@ -169,7 +171,7 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
 function toExplanation(r: { content: Step; meta: Record<string, any>; createdAt: string }, stale: boolean): StoredExplanation {
   const m = r.meta;
   return { unitId: "", step: r.content, validation: m.validation, evidence: m.evidence ?? {}, model: m.model ?? null, requestedModel: m.requestedModel ?? "",
-    costUsd: m.costUsd ?? null, attempts: m.attempts ?? 1, batched: !!m.batched, depth: m.depth ?? "thorough", createdAt: r.createdAt, stale };
+    costUsd: m.costUsd ?? null, tokens: m.tokens ?? null, attempts: m.attempts ?? 1, batched: !!m.batched, depth: m.depth ?? "thorough", createdAt: r.createdAt, stale };
 }
 
 /** Read-only view of an older revision picked from the history. */

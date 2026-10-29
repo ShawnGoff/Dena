@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { correlate, displaySummary, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
-import { exportGuideMarkdown, buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
+import { formatTokens, exportGuideMarkdown, buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
 import { startServer } from "@dena/server";
 
@@ -243,7 +243,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
           console.log(renderPacket(pk));
           break;
         }
-        const provider = new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account" });
+        const provider = new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account", effort: flag("effort") ?? store.projectSettings(p.id).effort });
         const x = await explainEpisode(store, p.id, ep.id, provider, { force: args.includes("--force"), model: flag("model"), depth,
           log: (m) => console.error(`· ${m}`) });
         const md = renderStep(x);
@@ -251,7 +251,8 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
           fs.writeFileSync(flag("out")!, md);
           console.error(`· wrote ${flag("out")}`);
         } else console.log(md);
-        console.error(`· ${x.cached ? "cached" : x.step.generatedBy === "facts" ? "built from facts (no model call)" : `generated in ${x.attempts} call${x.attempts > 1 ? "s" : ""}${x.costUsd ? `, $${x.costUsd.toFixed(3)} reported` : ""}`}; ${x.validation.ok ? "passed checks" : `${x.validation.issues.filter((i) => i.severity === "error").length} problems remain (shown in the step)`}`);
+        const used = x.tokens && x.tokens.prompt ? `${formatTokens(x.tokens.prompt)} tokens sent (${formatTokens(x.tokens.cacheRead)} from cache), ${formatTokens(x.tokens.output)} written${x.tokens.thinking ? ` (${formatTokens(x.tokens.thinking)} of it hidden reasoning)` : ""}` : null;
+        console.error(`· ${x.cached ? "cached" : x.step.generatedBy === "facts" ? "built from facts (no model call)" : `generated in ${x.attempts} call${x.attempts > 1 ? "s" : ""}${used ? `: ${used}` : ""}${x.costUsd ? ` (API-equivalent $${x.costUsd.toFixed(3)})` : ""}`}; ${x.validation.ok ? "passed checks" : `${x.validation.issues.filter((i) => i.severity === "error").length} problems remain (shown in the step)`}`);
         break;
       }
       case "guide": {
@@ -269,9 +270,10 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
   ${est.cached} already explained (free), ${est.factsOnly} with no changes (built from facts, free)
   ${est.modelCalls} model call${est.modelCalls === 1 ? "" : "s"} for the rest (small episodes share calls), ~${Math.round(est.inputChars / 1000)}k characters of evidence
   model: ${o.model ?? s.model ?? "your Claude Code default"} · depth: ${o.depth ?? s.depth}
-  estimated usage: ${est.estimatedUsd !== null ? `~$${est.estimatedUsd.toFixed(2)} as Claude Code reports it (${est.basis})` : est.basis}${maxUsd !== undefined ? `\n  cap: stops before exceeding $${maxUsd}` : ""}`);
+  estimated tokens: ${formatTokens(est.tokensLow)}–${formatTokens(est.tokensHigh)} in total (fewer if no repairs are needed; ${est.tokenBasis})
+  API-equivalent: ${est.estimatedUsd !== null ? `~$${est.estimatedUsd.toFixed(2)} (${est.basis})` : est.basis}${maxUsd !== undefined ? `\n  cap: stops before exceeding $${maxUsd}` : ""}`);
         if (!est.modelCalls) {
-          if (est.factsOnly) await explainMany(store, p.id, ids, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account" }), o);
+          if (est.factsOnly) await explainMany(store, p.id, ids, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account", effort: flag("effort") ?? store.projectSettings(p.id).effort }), o);
           console.log("Nothing needs a model.");
           break;
         }
@@ -279,7 +281,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
           console.log("\nNothing generated. Re-run with --yes to go ahead.");
           break;
         }
-        const r = await explainMany(store, p.id, ids, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account" }), { ...o, maxUsd, log: (m) => console.error(`· ${m}`),
+        const r = await explainMany(store, p.id, ids, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account", effort: flag("effort") ?? store.projectSettings(p.id).effort }), { ...o, maxUsd, log: (m) => console.error(`· ${m}`),
           onProgress: (x) => !x.cached && console.error(`  ✓ ${x.unitId} ${x.step.generatedBy === "facts" ? "(facts)" : x.batched ? "(shared call)" : ""}${x.validation.ok ? "" : " ⚠ problems remain"}`) });
         const repairs = r.explained.filter((x) => !x.cached && x.attempts > 1).length;
         console.log(`\nDone: ${r.explained.length} episodes, ${r.calls} model calls, $${r.spentUsd.toFixed(2)} reported, ${repairs} needed a repair`
@@ -313,7 +315,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
           break;
         }
         if (!sectionKeys(store, p.id).some((s) => s.key === key)) throw new Error(`No page "${key}". Run: dena wiki ${p.name}`);
-        const s = await generateSection(store, p.id, key, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account" }),
+        const s = await generateSection(store, p.id, key, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account", effort: flag("effort") ?? store.projectSettings(p.id).effort }),
           { model: flag("model"), force: args.includes("--force"), log: (m) => console.error(`· ${m}`) });
         const md = renderWikiMarkdown(s);
         if (flag("out")) fs.writeFileSync(flag("out")!, md);

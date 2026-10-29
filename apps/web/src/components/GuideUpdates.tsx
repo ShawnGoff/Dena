@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Badge } from "./Bits";
-import { when } from "../format";
+import { tokenRange, when } from "../format";
 
 interface Outdated { type: "step" | "wiki"; key: string; title: string; reason: string; userEdited: boolean; chars: number }
 interface Job { id: number; type: string; key: string; status: string; attempts: number; nextAt: string; lastError: string | null; result: string | null; updatedAt: string }
 interface Updates {
   outdated: Outdated[];
   estimate: { estimatedUsd: number | null; modelCalls: number } | null;
+  tokens: { prompt: number; output: number; low: number; high: number; calibrated: boolean; basis: string };
   jobs: Job[];
   running: boolean;
   settings: { model: string | null; maxUsdPerRun: number | null };
@@ -59,7 +60,8 @@ export function GuideUpdates({ projectId }: { projectId: string }) {
         <>
           <p className="muted" style={{ marginTop: 0 }}>
             {u.outdated.length} written {u.outdated.length === 1 ? "item is" : "items are"} behind the evidence. Updating rewrites only these, with <b>{u.settings.model ?? "your default model"}</b>
-            {u.estimate?.estimatedUsd != null ? ` (about $${(u.estimate.estimatedUsd + wikiCount * 0.006).toFixed(2)} est. usage)` : ""}.
+: {tokenRange(u.tokens.low, u.tokens.high)} in total
+            {u.estimate?.estimatedUsd != null ? ` (API-equivalent about $${(u.estimate.estimatedUsd + wikiCount * 0.006).toFixed(2)})` : ""}.
             {u.outdated.some((o) => o.userEdited) && " Items you edited keep your version; their update waits for your choice."}
           </p>
           <div className="notes-list">

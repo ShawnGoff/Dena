@@ -2,7 +2,8 @@ import type { Store } from "@dena/core";
 import { loadEpisodes } from "./episodes.ts";
 import { factsOnlyStep, needsModel, verificationFromFacts, whatChangedFromFacts } from "./facts.ts";
 import { buildPacket, renderPacket, type Depth, type Packet } from "./packet.ts";
-import type { Provider } from "./provider.ts";
+import { addTokens, NO_TOKENS, type Provider, type TokenUsage } from "./provider.ts";
+import { estimateTokens } from "./tokens.ts";
 import { BATCH_JSON_SCHEMA, ModelStep, PROMPT_VERSION, STEP_JSON_SCHEMA, Step, batchPrompt, systemPrompt, userPrompt } from "./schema.ts";
 import { validateStep, type Validation } from "./validate.ts";
 import { recordGenerated } from "./revisions.ts";
@@ -14,6 +15,8 @@ export interface Explanation {
   evidence: Record<string, { eventIds: number[]; kind: string; at: string }>;
   model: string | null;
   costUsd: number | null;
+  /** Real tokens used to write it (all attempts), when the model reported them. */
+  tokens: TokenUsage | null;
   cached: boolean;
   attempts: number;
   batched: boolean;
@@ -47,20 +50,25 @@ function cachedRow(store: Store, projectId: string, unitId: string, packet: Pack
   if (!row) return null;
   if (model && row.generated_by !== "facts" && row.requested_model !== model && row.model !== model) return null;
   return { unitId, step: Step.parse(JSON.parse(row.content_json)), validation: JSON.parse(row.validation_json), evidence: JSON.parse(row.evidence_json),
-    model: row.model, costUsd: row.cost_usd, cached: true, attempts: row.attempts, batched: !!row.batched, packetHash: packet.hash };
+    model: row.model, costUsd: row.cost_usd, tokens: rowTokens(row), cached: true, attempts: row.attempts, batched: !!row.batched, packetHash: packet.hash };
 }
+
+const rowTokens = (r: any): TokenUsage | null =>
+  r.prompt_tokens != null ? { prompt: r.prompt_tokens, output: r.output_tokens ?? 0, cacheRead: r.cache_read_tokens ?? 0 } : null;
 
 function save(store: Store, projectId: string, x: Explanation, meta: { requestedModel: string; depth: Depth; inputChars: number }) {
   store.db
     .prepare(`INSERT OR REPLACE INTO explanation (project_id, unit_id, packet_hash, prompt_version, requested_model, model, depth, generated_by,
-              attempts, batched, input_chars, output_chars, content_json, validation_json, evidence_json, cost_usd, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+              attempts, batched, input_chars, output_chars, content_json, validation_json, evidence_json, cost_usd, created_at,
+              prompt_tokens, output_tokens, cache_read_tokens)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(projectId, x.unitId, x.packetHash, PROMPT_VERSION, x.step.generatedBy === "facts" ? "" : meta.requestedModel, x.model, meta.depth,
       x.step.generatedBy, x.attempts, x.batched ? 1 : 0, meta.inputChars, JSON.stringify(x.step).length,
-      JSON.stringify(x.step), JSON.stringify(x.validation), JSON.stringify(x.evidence), x.costUsd, new Date().toISOString());
+      JSON.stringify(x.step), JSON.stringify(x.validation), JSON.stringify(x.evidence), x.costUsd, new Date().toISOString(),
+      x.tokens?.prompt ?? null, x.tokens?.output ?? null, x.tokens?.cacheRead ?? null);
   // Every new version also enters the step's revision history (and never overwrites the owner's edits).
   recordGenerated(store, projectId, "step", x.unitId, x.step, { model: x.model, requestedModel: meta.requestedModel, depth: meta.depth,
-    evidence: x.evidence, validation: x.validation, costUsd: x.costUsd, attempts: x.attempts, batched: x.batched, packetHash: x.packetHash });
+    evidence: x.evidence, validation: x.validation, costUsd: x.costUsd, tokens: x.tokens, attempts: x.attempts, batched: x.batched, packetHash: x.packetHash });
 }
 
 function assemble(model: ModelStep, packet: Packet): Step {
@@ -101,7 +109,7 @@ export async function explainEpisode(store: Store, projectId: string, unitId: st
   if (!needsModel(packet)) {
     const step = factsOnlyStep(packet, title);
     const x: Explanation = { unitId, step, validation: validateStep(step, packet, { depth }), evidence: evidenceMap(packet), model: null, costUsd: 0,
-      cached: false, attempts: 0, batched: false, packetHash: packet.hash };
+      tokens: NO_TOKENS, cached: false, attempts: 0, batched: false, packetHash: packet.hash };
     save(store, projectId, x, { requestedModel: model, depth, inputChars: 0 });
     log("no changes in this episode; summarised from facts without a model call");
     return x;
@@ -113,19 +121,24 @@ export async function explainEpisode(store: Store, projectId: string, unitId: st
   log(`sending ${packet.items.length} evidence items (${packet.chars} chars${packet.truncated ? ", some truncated" : ""}) to ${provider.name}${model ? ` [${model}]` : ""}, depth ${depth}`);
   let res = await provider.generate(system, prompt, STEP_JSON_SCHEMA, { model: model || undefined });
   let cost = res.costUsd ?? 0;
+  let tokens: TokenUsage | null = res.tokens ?? null;
+  let sentChars = prompt.length + system.length;
   let step = assemble(ModelStep.parse(res.json), packet);
   let validation = validateStep(step, packet, { depth });
   let attempts = 1;
   if (!validation.ok) {
     log(`checks found ${validation.issues.filter((i) => i.severity === "error").length} problems; one repair call`);
-    res = await provider.generate(system, repairPrompt(prompt, step, validation), STEP_JSON_SCHEMA, { model: model || undefined });
+    const repair = repairPrompt(prompt, step, validation);
+    res = await provider.generate(system, repair, STEP_JSON_SCHEMA, { model: model || undefined });
     cost += res.costUsd ?? 0;
+    tokens = tokens && res.tokens ? addTokens(tokens, res.tokens) : null;
+    sentChars += repair.length + system.length;
     step = assemble(ModelStep.parse(res.json), packet);
     validation = validateStep(step, packet, { depth });
     attempts = 2;
   }
-  const x: Explanation = { unitId, step, validation, evidence: evidenceMap(packet), model: res.model, costUsd: cost, cached: false, attempts, batched: false, packetHash: packet.hash };
-  save(store, projectId, x, { requestedModel: model, depth, inputChars: prompt.length + system.length });
+  const x: Explanation = { unitId, step, validation, evidence: evidenceMap(packet), model: res.model, costUsd: cost, tokens, cached: false, attempts, batched: false, packetHash: packet.hash };
+  save(store, projectId, x, { requestedModel: model, depth, inputChars: sentChars });
   return x;
 }
 
@@ -138,6 +151,14 @@ export interface Estimate {
   /** From this model's past runs in this store; null when there is no history to go on. */
   estimatedUsd: number | null;
   basis: string;
+  /** Tokens to send (including Dena's instructions and per-call overhead) and to be written back. */
+  promptTokens: number;
+  outputTokens: number;
+  /** Total tokens with no repairs, and with a repair for every call. */
+  tokensLow: number;
+  tokensHigh: number;
+  tokenBasis: string;
+  tokensCalibrated: boolean;
 }
 
 const BATCH_MAX_ITEM_CHARS = 8_000;
@@ -167,8 +188,11 @@ export function estimate(store: Store, projectId: string, unitIds: string[], opt
               WHERE generated_by = 'model' AND input_chars > 0 AND cost_usd > 0 AND (requested_model = ? OR model = ?)`)
     .get(model, model) as { c: number | null; i: number | null; n: number };
   const perChar = hist.n >= 2 && hist.c && hist.i ? hist.c / hist.i : null;
+  // Each call also carries Dena's instructions and the prompt wrapper around the evidence.
+  const tok = estimateTokens(store, model, inputChars + modelCalls * (systemPrompt(depth).length + 400), modelCalls, depth);
   return {
     episodes: unitIds.length, cached, factsOnly, modelCalls, inputChars,
+    promptTokens: tok.promptTokens, outputTokens: tok.outputTokens, tokensLow: tok.low, tokensHigh: tok.high, tokenBasis: tok.basis, tokensCalibrated: tok.calibrated,
     estimatedUsd: perChar !== null ? perChar * (inputChars + modelCalls * 6_000) * 1.15 : null, // instructions per call, plus repair allowance
     basis: perChar !== null ? `${hist.n} past explanations with ${model || "your default model"}` : `no past explanations with ${model || "your default model"} yet`,
   };
@@ -248,6 +272,9 @@ export async function explainMany(
     result.spentUsd += res.costUsd ?? 0;
     const steps = ((res.json as any)?.steps ?? []) as any[];
     const share = (res.costUsd ?? 0) / group.length;
+    const tokShare: TokenUsage | null = res.tokens
+      ? { prompt: Math.round(res.tokens.prompt / group.length), output: Math.round(res.tokens.output / group.length), cacheRead: Math.round(res.tokens.cacheRead / group.length) }
+      : null;
     for (const g of group) {
       const raw = steps.find((s) => s.episode === g.id);
       const parsed = raw ? ModelStep.safeParse(raw) : null;
@@ -261,7 +288,7 @@ export async function explainMany(
         large.unshift(g.id); // its own call includes a repair round if needed
         continue;
       }
-      const x: Explanation = { unitId: g.id, step, validation, evidence: evidenceMap(g.packet), model: res.model, costUsd: share, cached: false,
+      const x: Explanation = { unitId: g.id, step, validation, evidence: evidenceMap(g.packet), model: res.model, costUsd: share, tokens: tokShare, cached: false,
         attempts: 1, batched: true, packetHash: g.packet.hash };
       save(store, projectId, x, { requestedModel: model, depth, inputChars: Math.round((prompt.length + system.length) / group.length) });
       done(x);
@@ -303,7 +330,7 @@ export function storedExplanations(store: Store, projectId: string, unitId: stri
     if (!current.has(depth)) current.set(depth, buildPacket(store, projectId, unitId, { depth }).hash);
     return {
       unitId, step: Step.parse(JSON.parse(r.content_json)), validation: JSON.parse(r.validation_json), evidence: JSON.parse(r.evidence_json),
-      model: r.model, costUsd: r.cost_usd, cached: true, attempts: r.attempts, batched: !!r.batched, packetHash: r.packet_hash,
+      model: r.model, costUsd: r.cost_usd, tokens: rowTokens(r), cached: true, attempts: r.attempts, batched: !!r.batched, packetHash: r.packet_hash,
       requestedModel: r.requested_model, depth, createdAt: r.created_at, stale: current.get(depth) !== r.packet_hash,
     };
   });

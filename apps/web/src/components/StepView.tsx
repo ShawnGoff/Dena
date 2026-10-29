@@ -1,5 +1,6 @@
 import type { Claim, ClaimKind, StoredExplanation } from "../api";
 import { ClaimList, KIND } from "./ClaimList";
+import { tokenLine } from "../format";
 
 export { KIND };
 
@@ -95,7 +96,7 @@ export function StepView({ x, onRef, editable, onChange, onMarkIncorrect }: {
       <footer className="step-foot">
         {s.generatedBy === "facts"
           ? "No model was used: this episode changed nothing, so Dena summarised the captured messages."
-          : `Written by ${x.model ?? "unknown model"} · ${x.depth}${x.costUsd ? ` · est. usage $${x.costUsd.toFixed(3)}` : ""}${x.batched ? " (shared call)" : ""}${x.attempts > 1 ? " · needed 1 repair" : ""}`}
+          : `Written by ${x.model ?? "unknown model"} · ${x.depth}${tokenLine(x.tokens) ? ` · ${tokenLine(x.tokens)}` : ""}${x.costUsd ? ` (API-equivalent $${x.costUsd.toFixed(3)})` : ""}${x.batched ? " · shared call" : ""}${x.attempts > 1 ? " · needed 1 repair" : ""}`}
         {" · "}{x.validation.counts.observed} observed, {x.validation.counts.inferred} inferred, {x.validation.counts.agent_stated} agent-said, {x.validation.counts.background} background
         {" · "}{Math.round(x.validation.citedShare * 100)}% of project statements have valid evidence
       </footer>

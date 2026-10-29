@@ -8,11 +8,34 @@ import path from "node:path";
  * whatever model and sign-in the user already has and needs no API key of its own.
  */
 
+/** Tokens one call actually used. `prompt` is everything sent: fresh input plus cache reads and writes. */
+export interface TokenUsage {
+  prompt: number;
+  output: number;
+  cacheRead: number;
+  /** Part of `output` spent on hidden reasoning, when reported. */
+  thinking?: number;
+}
+
+export const NO_TOKENS: TokenUsage = { prompt: 0, output: 0, cacheRead: 0 };
+export const addTokens = (a: TokenUsage, b?: TokenUsage | null): TokenUsage =>
+  b ? { prompt: a.prompt + b.prompt, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, thinking: (a.thinking ?? 0) + (b.thinking ?? 0) } : a;
+
+/** Reads Claude Code's `usage` block. */
+export function tokensFromUsage(u: any): TokenUsage | null {
+  if (!u || typeof u !== "object") return null;
+  const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : 0);
+  const prompt = n(u.input_tokens) + n(u.cache_read_input_tokens) + n(u.cache_creation_input_tokens);
+  return { prompt, output: n(u.output_tokens), cacheRead: n(u.cache_read_input_tokens), thinking: n(u.output_tokens_details?.thinking_tokens) };
+}
+
 export interface GenerateResult {
   json: unknown;
   model: string | null;
   costUsd: number | null;
   durationMs: number;
+  /** Real token counts, when the backend reports them. */
+  tokens?: TokenUsage | null;
 }
 
 export interface Provider {
@@ -80,7 +103,7 @@ export class ClaudeCodeProvider implements Provider {
   readonly name: string;
   constructor(
     private readonly bin = findClaudeBinary(),
-    private readonly opts: { model?: string; timeoutMs?: number; auth?: ClaudeAuth } = {},
+    private readonly opts: { model?: string; timeoutMs?: number; auth?: ClaudeAuth; effort?: string } = {},
   ) {
     this.name = `claude-code (${(opts.auth ?? "account") === "account" ? "your Claude account" : "API key"})`;
     if (!this.bin) throw new Error("Could not find Claude Code. Install it, or set DENA_CLAUDE_BIN to its path.");
@@ -95,6 +118,7 @@ export class ClaudeCodeProvider implements Provider {
       "--no-session-persistence", // Dena's own calls never become transcripts
       "--strict-mcp-config", "--disable-slash-commands",
       ...(model ? ["--model", model] : []), // default: the user's configured model
+      ...(this.opts.effort ? ["--effort", this.opts.effort] : []), // how much hidden reasoning the model may spend
     ];
     // A neutral working directory keeps project-level hooks and settings out of the call.
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "dena-gen-"));
@@ -124,7 +148,8 @@ export class ClaudeCodeProvider implements Provider {
             return reject(new Error("Claude Code did not return structured output"));
           }
         }
-        resolve({ json, model: Object.keys(o.modelUsage ?? {})[0] ?? null, costUsd: o.total_cost_usd ?? null, durationMs: o.duration_ms ?? 0 });
+        resolve({ json, model: Object.keys(o.modelUsage ?? {})[0] ?? null, costUsd: o.total_cost_usd ?? null, durationMs: o.duration_ms ?? 0,
+          tokens: tokensFromUsage(o.usage) });
       });
       child.stdin.end(user);
     });

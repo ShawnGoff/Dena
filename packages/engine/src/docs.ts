@@ -14,11 +14,11 @@ export function ensureDocRevision(store: Store, projectId: string, type: DocType
     const [x] = storedExplanations(store, projectId, key);
     if (!x) return null;
     return recordGenerated(store, projectId, "step", key, x.step, { model: x.model, requestedModel: x.requestedModel, depth: x.depth, evidence: x.evidence,
-      validation: x.validation, costUsd: x.costUsd, attempts: x.attempts, batched: x.batched, packetHash: x.packetHash });
+      validation: x.validation, costUsd: x.costUsd, tokens: x.tokens, attempts: x.attempts, batched: x.batched, packetHash: x.packetHash });
   }
   const w = storedSection(store, projectId, key as SectionKey);
   if (!w) return null;
   const hash = buildBrief(store, projectId, key as SectionKey).hash;
   return recordGenerated(store, projectId, "wiki", key, w.section, { model: w.model, requestedModel: w.requestedModel, sources: w.sources, validation: w.validation,
-    costUsd: w.costUsd, attempts: w.attempts, inputHash: w.stale ? "" : hash });
+    costUsd: w.costUsd, tokens: w.tokens, attempts: w.attempts, inputHash: w.stale ? "" : hash });
 }

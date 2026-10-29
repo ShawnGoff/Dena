@@ -39,6 +39,24 @@ export const STRENGTH_HELP: Record<string, string> = {
   weak: "Only happened around the same time; not evidence of cause",
 };
 
+/** 4300 → "4.3k", 14200 → "14k". */
+export function tokens(n: number): string {
+  return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1_000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+/** "about 7–21k tokens" */
+export function tokenRange(low: number, high: number): string {
+  return `about ${tokens(low).replace(/k$/, "")}–${tokens(high)} tokens`;
+}
+
+export interface TokenUse { prompt: number; output: number; cacheRead: number }
+
+/** "Used 14k tokens (9.8k from cache) · 2.1k written" */
+export function tokenLine(t: TokenUse | null | undefined): string | null {
+  if (!t || !t.prompt) return null;
+  return `${tokens(t.prompt)} tokens sent${t.cacheRead ? ` (${tokens(t.cacheRead)} from cache)` : ""} · ${tokens(t.output)} written`;
+}
+
 export function when(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });

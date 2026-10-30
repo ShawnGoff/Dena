@@ -4,6 +4,17 @@ import { api } from "../api";
 type Settings = { model: string | null; depth: "concise" | "thorough"; auth: "account" | "api-key" };
 type Auth = { found: boolean; loggedIn: boolean; method: string | null; detail: string };
 
+const CHANGED = "dena:settings-changed";
+
+/** Runs `reload` when the project's model settings change, so an open page shows the model and estimate that will really be used. */
+export function useSettingsChanged(reload: () => void) {
+  useEffect(() => {
+    const h = () => reload();
+    window.addEventListener(CHANGED, h);
+    return () => window.removeEventListener(CHANGED, h);
+  }, [reload]);
+}
+
 /** Which model writes new explanations and pages, how deep they go, and how Dena signs in. Saved per project. */
 export function ModelSettings({ projectId }: { projectId: string }) {
   const [s, setS] = useState<Settings | null>(null);
@@ -17,6 +28,7 @@ export function ModelSettings({ projectId }: { projectId: string }) {
   const save = (patch: Partial<Settings>) => api<Settings>(`projects/${projectId}/settings`, { method: "POST", body: patch }).then((n) => {
     setS(n);
     if ("auth" in patch) loadAuth();
+    window.dispatchEvent(new Event(CHANGED));
   }, () => {});
   const known = ["haiku", "sonnet", "opus"];
   return (

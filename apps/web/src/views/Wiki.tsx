@@ -5,7 +5,7 @@ import { KIND } from "../components/StepView";
 import { ClaimList } from "../components/ClaimList";
 import { DocBar, type DocResponse } from "../components/DocBar";
 import { BusyBar, ModelChoice } from "../components/BusyBar";
-import { ModelSettings } from "../components/ModelSettings";
+import { ModelSettings, useSettingsChanged } from "../components/ModelSettings";
 import { isStandingLimitationText, tokenLine, tokenRange, when } from "../format";
 import { AboutGuide } from "../components/AboutGuide";
 import { HowBuilt } from "../components/HowBuilt";
@@ -110,6 +110,7 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
   useEffect(() => {
     load();
   }, [load]);
+  useSettingsChanged(load);
 
   const [stopping, setStopping] = useState(false);
   const [runModel, setRunModel] = useState("");
@@ -153,7 +154,7 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
       {!doc.active && (
         <div className="explain-card">
           <h2 className="step-title" style={{ marginTop: 0 }}>{LABEL(pageKey)}</h2>
-          <p className="muted">Not written yet. Dena will send {r.brief.sources} sources (facts counted from events, and claims from explained episodes) to <b>{r.settings.model ?? "your default model"}</b>:
+          <p className="muted">Not written yet. Dena will send {r.brief.sources} sources (facts counted from events, claims from explained episodes, and the project's own files):
             {tokenRange(r.brief.tokens.low, r.brief.tokens.high)} (the high end if the checks ask for a repair).
             <span className="faint small" style={{ display: "block", marginTop: 4 }}>Token estimate {r.brief.tokens.calibrated ? "" : "uses "}{r.brief.tokens.basis}.</span></p>
           <span className="row">

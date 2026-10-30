@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Badge, Loading } from "../components/Bits";
 import { BusyBar, ModelChoice } from "../components/BusyBar";
-import { ModelSettings } from "../components/ModelSettings";
+import { ModelSettings, useSettingsChanged } from "../components/ModelSettings";
 import { tokenLine, tokenRange, when } from "../format";
 
 interface FileSummary { path: string; language: string; bytes: number; symbols: number; current: number; changed: number; new: number; fileDoc: "current" | "outdated" | "none" }
@@ -42,6 +42,7 @@ export function Code({ projectId, file, onFile, onEvent }: { projectId: string; 
   useEffect(() => {
     load();
   }, [load]);
+  useSettingsChanged(load);
   const groups = useMemo(() => {
     const m = new Map<string, FileSummary[]>();
     for (const f of files ?? []) {
@@ -109,6 +110,7 @@ function FilePage({ projectId, file, onFile, onEvent, onChanged, known }: { proj
   useEffect(() => {
     load();
   }, [load]);
+  useSettingsChanged(load);
   const lines = useMemo(() => p?.text.split("\n") ?? [], [p?.text]);
 
   const explain = async (force = false) => {
@@ -156,7 +158,7 @@ function FilePage({ projectId, file, onFile, onEvent, onChanged, known }: { proj
       {p.pending.calls > 0 && (
         <div className="explain-card" style={{ marginBottom: 18 }}>
           <p className="muted" style={{ marginTop: 0 }}>
-            {!anyDoc ? <>Not explained yet. Dena will send this file's {p.pending.symbols} parts to <b>{p.settings.model ?? "your default model"}</b></>
+            {!anyDoc ? <>Not explained yet. Dena will send this file's {p.pending.symbols} {p.pending.symbols === 1 ? "part" : "parts"}</>
               : <>{changed ? `${changed} changed` : ""}{changed && fresh ? " and " : ""}{fresh ? `${fresh} new` : ""}{changed || fresh ? ` ${changed + fresh === 1 ? "part" : "parts"} since the last explanation` : "The file's outline changed"}. Only {p.pending.symbols ? "those" : "the file page"} will be sent{p.pending.symbols && p.pending.fileDoc ? ", plus the file page" : ""}</>}
             {p.pending.estimate && <>: {tokenRange(p.pending.estimate.low, p.pending.estimate.high)}{p.pending.calls > 1 ? ` in ${p.pending.calls} calls` : ""}.</>}
             {p.pending.estimate && <span className="faint small" style={{ display: "block", marginTop: 4 }}>Token estimate {p.pending.estimate.calibrated ? "" : "uses "}{p.pending.estimate.basis}.</span>}

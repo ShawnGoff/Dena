@@ -9,6 +9,7 @@ import { ModelSettings, useSettingsChanged } from "../components/ModelSettings";
 import { isStandingLimitationText, tokenLine, tokenRange, when } from "../format";
 import { AboutGuide } from "../components/AboutGuide";
 import { HowBuilt } from "../components/HowBuilt";
+import { TutorialDialog } from "../components/TutorialDialog";
 
 interface PageInfo { key: string; title: string; sources: number; chars: number; generated: boolean; stale: boolean; model: string | null }
 interface Source { ref: string; type: "fact" | "claim" | "code"; grade: keyof typeof KIND; text: string; unitId: string | null; eventIds: number[]; files?: string[] }
@@ -27,7 +28,7 @@ interface Stored {
 interface SectionResponse { section: Stored | null; brief: { sources: number; chars: number; tokens: { promptTokens: number; outputTokens: number; low: number; high: number; calibrated: boolean; basis: string } };
   settings: { model: string | null } }
 
-const LABEL = (key: string) => (key === "overview" ? "Overview" : key === "product" ? "Product guide" : key === "architecture" ? "Architecture" : key.slice("component:".length));
+const LABEL = (key: string) => (key === "overview" ? "Overview" : key === "product" ? "Product guide" : key === "tutorial" ? "Build it yourself" : key === "architecture" ? "Architecture" : key.slice("component:".length));
 /** Source files the Code tab explains (documents and package files are shown as plain paths). */
 const isCode = (f: string) => /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|go|rs|rb|java|kt|swift|c|h|cpp|hpp|cs|php|css|scss|html|vue|svelte|sql|sh)$/i.test(f);
 const sourceBadge = (x: Source) => (x.type === "fact" ? "Fact" : x.type === "code" ? (x.grade === "observed" ? "From the project's files" : "Dena's reading of the code") : `Claim · ${KIND[x.grade].label}`);
@@ -114,6 +115,10 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
 
   const [stopping, setStopping] = useState(false);
   const [runModel, setRunModel] = useState("");
+  // The whole-project tutorial asks first, with an estimate, every time it is written in full.
+  const tutorial = pageKey === "tutorial";
+  const [confirm, setConfirm] = useState(false);
+  const writeFull = (force = false) => (tutorial ? setConfirm(true) : write(runModel || undefined, force));
   const stop = async () => {
     setStopping(true);
     await api(`projects/${projectId}/wiki/stop`, { method: "POST", body: { key: pageKey } }).catch(() => {});
@@ -151,7 +156,16 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
     <div className="page" style={{ maxWidth: 840 }}>
       {busy && <BusyBar what={`Writing this page${busy !== "default" ? ` with ${busy[0]!.toUpperCase() + busy.slice(1)}` : ""}`} onStop={stop} stopping={stopping} />}
       {err && <div className={err.startsWith("Stopped") ? "notice" : "error"}>{err}</div>}
-      {!doc.active && (
+      {confirm && <TutorialDialog projectId={projectId} onClose={() => setConfirm(false)} onDone={() => { setViewing(null); load(); onWritten(); }} />}
+      {!doc.active && tutorial && (
+        <div className="explain-card">
+          <h2 className="step-title" style={{ marginTop: 0 }}>Build it yourself</h2>
+          <p className="muted">One tutorial that teaches someone to build this project from the start, written from the instructions in your explained steps.
+            It covers your entire project, so Dena shows the estimate and asks before it starts.</p>
+          <button className="btn primary" onClick={() => setConfirm(true)}>Write the tutorial…</button>
+        </div>
+      )}
+      {!doc.active && !tutorial && (
         <div className="explain-card">
           <h2 className="step-title" style={{ marginTop: 0 }}>{LABEL(pageKey)}</h2>
           <p className="muted">Not written yet. Dena will send {r.brief.sources} sources (facts counted from events, claims from explained episodes, and the project's own files):
@@ -164,7 +178,7 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
         </div>
       )}
       {doc.active && <DocBar projectId={projectId} type="wiki" docKey={pageKey} doc={doc} onChanged={() => { load(); onWritten(); }} viewing={viewing} onView={setViewing} allowContext={false}
-        onRewrite={() => write(runModel || undefined, true)} projectModel={r.settings.model} />}
+        onRewrite={() => writeFull(true)} projectModel={r.settings.model} />}
       {s && (
         <article className="step">
           <h2 className="step-title">{s.section.title}</h2>
@@ -176,7 +190,7 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
           {s.section.sections.map((sec) => (
             <section key={sec.heading} className="step-section">
               <h3>{sec.heading}</h3>
-              <ClaimList claims={sec.claims} flaggedByChecks={flagged} editable={editable}
+              <ClaimList claims={sec.claims} flaggedByChecks={flagged} editable={editable} numbered={tutorial}
                 refs={(c) => c.evidence.map((ref) => <button key={ref} className="ref" onClick={() => goSource(ref)} title="Show this source">{ref}</button>)}
                 onEdit={(i, next) => {
                   const sections = s.section.sections.map((x) => (x === sec ? { ...x, claims: next ? x.claims.map((c, j) => (j === i ? next : c)) : x.claims.filter((_, j) => j !== i) } : x));
@@ -227,7 +241,7 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
           <div className="explain-more">
             <span className="muted">Rewrite this page. Stronger models are more careful and use more of your plan.</span>
             <ModelChoice value={runModel} onChange={setRunModel} projectDefault={r.settings.model} />
-            <button className="btn" disabled={!!busy} onClick={() => write(runModel || undefined, true)}>Rewrite</button>
+            <button className="btn" disabled={!!busy} onClick={() => writeFull(true)}>{tutorial ? "Rewrite…" : "Rewrite"}</button>
           </div>
         </article>
       )}

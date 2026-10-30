@@ -89,6 +89,7 @@ function goodStep(): Step {
   return {
     title: "Building a CSV parser that handles quoted fields",
     summary: "The AI wrote a parser, a test exposed a quoting bug, and a fix made all tests pass.",
+    goal: "", prerequisites: [], instructions: [], check: [], pitfalls: [],
     whatHappened: [claim("The first test run failed: 2 passed, 1 failed.", "observed", [fail])],
     whyItMattered: [claim("CSV files often contain commas inside quoted values.", "background", [])],
     howItWorks: [claim("A quote-aware splitter tracks whether it is inside quotes before treating a comma as a separator. ".repeat(5), "background", [])],

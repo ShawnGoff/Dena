@@ -6,9 +6,9 @@ import { loadEpisodes } from "./episodes.ts";
 import { ensureMemory, latestExplanations, loadMemory, type LatestExplanation, type MemoryEntity } from "./memory.ts";
 import { addTokens, type Provider, type TokenUsage } from "./provider.ts";
 import { estimateTokens, type TokenEstimate } from "./tokens.ts";
-import { Claim, ClaimKind } from "./schema.ts";
+import { Claim, ClaimKind, Step } from "./schema.ts";
 import { z } from "zod";
-import { recordGenerated } from "./revisions.ts";
+import { activeRevision, recordGenerated } from "./revisions.ts";
 
 /**
  * L3 wiki sections: the readable pages of the guide (an overview, the architecture, one page per
@@ -22,7 +22,7 @@ import { recordGenerated } from "./revisions.ts";
 
 export const WIKI_PROMPT_VERSION = 2;
 
-export type SectionKey = "overview" | "product" | "architecture" | `component:${string}`;
+export type SectionKey = "overview" | "product" | "tutorial" | "architecture" | `component:${string}`;
 
 export interface WikiSource {
   ref: string;
@@ -50,6 +50,8 @@ export interface Brief {
 }
 
 const MAX_SOURCES = 90;
+const MAX_TUTORIAL_SOURCES = 160;
+const PER_STEP_INSTRUCTIONS = 6;
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** Components worth a page of their own: the busiest, by commits and changes. */
@@ -65,6 +67,7 @@ export function sectionKeys(store: Store, projectId: string): { key: SectionKey;
   return [
     { key: "overview", title: "Overview" },
     { key: "product", title: "Product guide" },
+    { key: "tutorial", title: "Build it yourself" },
     { key: "architecture", title: "Architecture" },
     ...wikiComponents(store, projectId).map((c) => ({ key: `component:${c.title}` as SectionKey, title: c.title })),
   ];
@@ -81,7 +84,7 @@ export function buildBrief(store: Store, projectId: string, key: SectionKey): Br
   const sources: WikiSource[] = [];
   const ctx: string[] = [`Project: ${project.name}`, `Episodes: ${eps.length} (${explained.length} explained so far)`];
   const add = (s: Omit<WikiSource, "ref">) => {
-    if (sources.length >= MAX_SOURCES || (!s.eventIds.length && !s.files?.length)) return; // a source that reaches no evidence is never offered
+    if (sources.length >= (key === "tutorial" ? MAX_TUTORIAL_SOURCES : MAX_SOURCES) || (!s.eventIds.length && !s.files?.length)) return; // a source that reaches no evidence is never offered
     sources.push({ ...s, ref: `S${sources.length + 1}` });
   };
   const epLabel = (u: string | null) => (u && pos.has(u) ? ` (episode #${pos.get(u)})` : "");
@@ -151,6 +154,31 @@ export function buildBrief(store: Store, projectId: string, key: SectionKey): Br
       add({ type: "fact", grade: "observed", unitId: null, eventIds: [e.id], text: `The owner asked on ${e.occurredAt.slice(0, 10)}: "${clip(String((e.payload as any).text).replace(/\s+/g, " "), 220)}"` });
     commitsOf(() => true, 15, "Commits");
     for (const x of explained) claimsFrom(x, ["whatHappened"], (c) => c.kind === "observed", 1);
+  } else if (key === "tutorial") {
+    title = `Build ${project.name} yourself`;
+    // The current version of each explained step, in order (the owner's edits included).
+    const steps = eps.flatMap((e) => {
+      const rev = activeRevision(store, projectId, "step", e.id);
+      const parsed = rev && Step.safeParse(rev.content);
+      return parsed && parsed.success && parsed.data.generatedBy !== "facts" ? [{ ep: e, step: parsed.data, evidence: (rev!.meta.evidence ?? {}) as Record<string, { eventIds: number[] }> }] : [];
+    });
+    const guided = steps.filter((x) => x.step.instructions.length);
+    ctx.push(`This page is one tutorial for building the project from the start. Its sources are the instructions from ${guided.length} explained steps, in order` +
+      `${steps.length > guided.length ? `, plus the story of ${steps.length - guided.length} steps explained before instructions existed` : ""}. ` +
+      `${eps.length} episodes exist; episodes that are not explained are not covered, so say where the tutorial has gaps.`);
+    for (const c of productCodeSources(store, projectId).filter((c) => /install|setup|getting|prereq|requirement|run|scripts|help text/i.test(c.text)).slice(0, 8)) add(c);
+    const ids = (x: (typeof steps)[number], refs: string[]) => refs.flatMap((r) => x.evidence[r]?.eventIds ?? []).slice(0, 8);
+    for (const x of steps) {
+      const label = `Step "${clip(x.step.title, 90)}" (episode #${x.ep.position})`;
+      if (x.step.instructions.length) {
+        if (x.step.goal) add({ type: "claim", grade: "inferred", unitId: x.ep.id, eventIds: ids(x, x.step.instructions.flatMap((c) => c.evidence)), text: `${label}, goal: ${clip(x.step.goal, 240)}` });
+        x.step.instructions.slice(0, PER_STEP_INSTRUCTIONS).forEach((c, i) =>
+          add({ type: "claim", grade: c.kind, unitId: x.ep.id, eventIds: ids(x, c.evidence), text: `${label}, instruction ${i + 1}: ${c.text}${c.code ? ` Code: ${clip(c.code, 500)}` : ""}` }));
+        for (const c of x.step.pitfalls.slice(0, 1)) add({ type: "claim", grade: c.kind, unitId: x.ep.id, eventIds: ids(x, c.evidence), text: `${label}, if it goes wrong: ${c.text}` });
+      } else
+        for (const c of x.step.whatHappened.filter((c) => c.kind === "observed").slice(0, 2))
+          add({ type: "claim", grade: "observed", unitId: x.ep.id, eventIds: ids(x, c.evidence), text: `${label}, what was done: ${c.text}` });
+    }
   } else if (key === "architecture") {
     title = `${project.name}: architecture`;
     for (const c of comps.slice(0, 10)) componentFact(c);
@@ -321,7 +349,19 @@ export const WIKI_JSON_SCHEMA = {
   additionalProperties: false,
 };
 
+/** The tutorial's instructions also carry the command or code to use ("" when none). */
+export const WIKI_TUTORIAL_JSON_SCHEMA = {
+  ...WIKI_JSON_SCHEMA,
+  properties: {
+    ...WIKI_JSON_SCHEMA.properties,
+    sections: { type: "array", items: { type: "object", properties: { heading: { type: "string" },
+      claims: { type: "array", items: { ...claimJson, properties: { ...claimJson.properties, code: { type: "string" } }, required: [...claimJson.required, "code"] } } },
+      required: ["heading", "claims"], additionalProperties: false } },
+  },
+};
+
 const PAGE_GUIDE: Record<string, string> = {
+  tutorial: `Write ONE tutorial that teaches a reader to build this project from the start, by following steps in order. Organise it into 4–10 sections, each a stage of the build (for example "Set up the project", "Add the data layer"), with a first section on what you need before you start. Within each section, write the claims as instructions in imperative voice (the page numbers them; do not number them yourself), in the order that works, merging steps that belong together and leaving out dead ends (mention a real pitfall where it helps). Put the exact command or code from the sources in "code" ("" when there is none). Keep every instruction tied to its sources, and say in "uncertainty" where steps are missing because episodes are not explained.`,
   product: `Write the product guide: a page for someone who will USE the project, not someone who builds it. Cover what it does and who it is for; how to get started (installing and running it); the main features and how to use each one, step by step where the sources show the steps; and its limits (what it does not do, what is not finished). Use 4–6 sections. Base what the product does today on FILE sources (the project's current files); owner requests show what was wanted, and commits show what was built when, but a request alone does not show a feature exists. Where the README and the code disagree, say so.`,
   overview: `Write the project's overview page: what the project is, what it does today, how it developed over time (major phases and milestones, in order), and what kinds of problems came up and were solved. Use 3–5 sections.`,
   architecture: `Write the architecture page: the main components and what each is responsible for, how they connect, the important design decisions, and the mechanisms worth understanding. Use 3–6 sections. Teach how the pieces fit together.`,
@@ -424,24 +464,25 @@ export async function generateSection(store: Store, projectId: string, key: Sect
   }
   if (!brief.sources.length) throw new Error("There is no captured evidence for this page yet.");
   const kind = key.startsWith("component:") ? "component" : key;
+  const schema = key === "tutorial" ? WIKI_TUTORIAL_JSON_SCHEMA : WIKI_JSON_SCHEMA;
   const user = `${PAGE_GUIDE[kind]}\n\nPage: ${brief.title}\n\n<sources>\n${renderBrief(brief)}\n</sources>\n\nWrite the page as JSON matching the schema.`;
   log(`sending ${brief.sources.length} sources (${brief.chars} chars) to ${provider.name}${model ? ` [${model}]` : ""}`);
-  let res = await provider.generate(WIKI_SYSTEM_PROMPT, user, WIKI_JSON_SCHEMA, { model: model || undefined, signal: opts.signal });
+  let res = await provider.generate(WIKI_SYSTEM_PROMPT, user, schema, { model: model || undefined, signal: opts.signal });
   let cost = res.costUsd ?? 0;
   let tokens: TokenUsage | null = res.tokens ?? null;
   let sentChars = user.length + WIKI_SYSTEM_PROMPT.length;
-  let section = WikiSection.parse(res.json);
+  let section = dropEmptyCode(WikiSection.parse(res.json));
   let validation = validateSection(section, brief);
   let attempts = 1;
   if (!validation.ok) {
     const errors = validation.issues.filter((i) => i.severity === "error");
     log(`checks found ${errors.length} problems; one repair call`);
     const repair = `${user}\n\nYour previous answer:\n${JSON.stringify(section)}\n\nFix each problem by correcting the claim, citing the right sources, lowering its kind, or removing it:\n${errors.map((e) => `- [${e.heading}] "${e.claim ?? ""}": ${e.message}`).join("\n")}`;
-    res = await provider.generate(WIKI_SYSTEM_PROMPT, repair, WIKI_JSON_SCHEMA, { model: model || undefined, signal: opts.signal });
+    res = await provider.generate(WIKI_SYSTEM_PROMPT, repair, schema, { model: model || undefined, signal: opts.signal });
     cost += res.costUsd ?? 0;
     tokens = tokens && res.tokens ? addTokens(tokens, res.tokens) : null;
     sentChars += repair.length + WIKI_SYSTEM_PROMPT.length;
-    section = WikiSection.parse(res.json);
+    section = dropEmptyCode(WikiSection.parse(res.json));
     validation = validateSection(section, brief);
     attempts = 2;
   }
@@ -449,6 +490,16 @@ export async function generateSection(store: Store, projectId: string, key: Sect
   recordGenerated(store, projectId, "wiki", key, section, { model: res.model, requestedModel: model, sources: brief.sources, validation, costUsd: cost, tokens, attempts, inputHash: brief.hash });
   return { key, section, validation, sources: brief.sources, model: res.model, requestedModel: model, costUsd: cost, tokens, attempts, createdAt: new Date().toISOString(), stale: false, cached: false };
 }
+
+/** Tidies a written page: no empty code fields, and no numbers the model added itself (the page numbers instructions). */
+const dropEmptyCode = (w: WikiSection): WikiSection => {
+  for (const sec of w.sections)
+    for (const c of sec.claims) {
+      if (c.code !== undefined && !c.code.trim()) delete c.code;
+      if (c.code !== undefined) c.text = c.text.replace(/^\s*(?:step\s*)?\d+[.):]\s+/i, "");
+    }
+  return w;
+};
 
 /** Stores a page as the current reading of its brief, so later runs reuse it instead of paying again. */
 export function cacheSection(store: Store, projectId: string, key: SectionKey, x: { inputHash: string; requestedModel: string; model: string | null; attempts: number; section: WikiSection;

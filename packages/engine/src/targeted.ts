@@ -5,7 +5,7 @@ import { verificationFromFacts, whatChangedFromFacts } from "./facts.ts";
 import { buildPacket, renderPacket, type Depth, type EvidenceItem, type Packet } from "./packet.ts";
 import type { Provider, TokenUsage } from "./provider.ts";
 import { activeRevision, adoptProposed, recordProposed, revisions, type DocType, type Revision } from "./revisions.ts";
-import { Claim, ClaimKind, Step, referenceGuide, systemPrompt } from "./schema.ts";
+import { Claim, ClaimKind, STEP_CLAIM_SECTIONS, Step, referenceGuide, systemPrompt } from "./schema.ts";
 import { estimateTokens, type TokenEstimate } from "./tokens.ts";
 import { autoFixStep, validateStep } from "./validate.ts";
 import { buildBrief, cacheSection, renderBrief, validateSection, WIKI_SYSTEM_PROMPT, WikiSection, type Brief, type SectionKey, type WikiSource } from "./wiki.ts";
@@ -23,10 +23,11 @@ import { z } from "zod";
  * marked are always kept as they are.
  */
 
-const STEP_SECTIONS = ["whatHappened", "whyItMattered", "howItWorks", "decisions"] as const;
+const STEP_SECTIONS = STEP_CLAIM_SECTIONS;
 type StepSection = (typeof STEP_SECTIONS)[number];
 const FACT_SECTIONS = ["whatChanged", "verification"] as const;
 export const SECTION_LABEL: Record<string, string> = {
+  prerequisites: "Before you start", instructions: "Steps", check: "Check it works", pitfalls: "If it goes wrong",
   whatHappened: "What happened", whyItMattered: "Why it mattered", howItWorks: "How it works", decisions: "Decisions",
   whatChanged: "What changed", verification: "How it was verified",
 };
@@ -166,8 +167,9 @@ const updateJson = (sections: string[] | null, refPattern: string, allowOwner: b
           text: { type: "string" },
           kind: { type: "string", enum: ["observed", "inferred", "agent_stated", ...(allowOwner ? ["owner_stated"] : []), "background"] },
           evidence: { type: "array", items: { type: "string", pattern: refPattern } },
+          code: { type: "string", description: "For an instruction: the command or code to use, from the evidence; otherwise an empty string." },
         },
-        required: ["section", "replaces", "text", "kind", "evidence"],
+        required: ["section", "replaces", "text", "kind", "evidence", "code"],
         additionalProperties: false,
       },
     },
@@ -180,7 +182,7 @@ const updateJson = (sections: string[] | null, refPattern: string, allowOwner: b
 const UpdateOut = z.object({
   title: z.string(),
   summary: z.string(),
-  updates: z.array(z.object({ section: z.string(), replaces: z.string(), text: z.string().min(1), kind: ClaimKind, evidence: z.array(z.string()) })),
+  updates: z.array(z.object({ section: z.string(), replaces: z.string(), text: z.string().min(1), kind: ClaimKind, evidence: z.array(z.string()), code: z.string().optional() })),
   remove: z.array(z.string()),
   uncertainty: z.array(z.string()),
 });
@@ -230,7 +232,7 @@ export async function updateStep(store: Store, projectId: string, unitId: string
   if (!plan) throw new Error("This episode has no AI-written explanation to update; explain it first.");
   const model = opts.model ?? store.projectSettings(projectId).model ?? "";
   const before = Step.parse(plan.base.content);
-  const lists: Record<StepSection, z.infer<typeof Claim>[]> = { whatHappened: [], whyItMattered: [], howItWorks: [], decisions: [] };
+  const lists = Object.fromEntries(STEP_SECTIONS.map((x) => [x, []])) as unknown as Record<StepSection, z.infer<typeof Claim>[]>;
   // Each section is rebuilt in its original order: kept statements as they were, affected ones
   // replaced in place by their revision (or dropped), new ones at the end of their section.
   const slots = plan.order as { section: StepSection; id: string }[];
@@ -264,7 +266,7 @@ export async function updateStep(store: Store, projectId: string, unitId: string
     for (const r of out.remove) if (r.startsWith("K") && byId.get(r)?.reason !== "yours") removedIds.add(r);
     for (const u of out.updates) {
       if (!(STEP_SECTIONS as readonly string[]).includes(u.section)) continue;
-      const claim = { text: u.text, kind: u.kind, evidence: u.evidence };
+      const claim = { text: u.text, kind: u.kind, evidence: u.evidence, ...(u.code?.trim() ? { code: u.code } : {}) };
       const target = byId.get(u.replaces);
       if (target && target.reason !== "yours" && !replaced.has(u.replaces)) replaced.set(u.replaces, claim);
       else if (!u.replaces) added.push({ section: u.section as StepSection, claim });
@@ -362,7 +364,7 @@ export async function updateSection(store: Store, projectId: string, key: Sectio
     uncertainty = out.uncertainty;
     for (const r of out.remove) if (r.startsWith("K") && byId.get(r)?.reason !== "yours") removedIds.add(r);
     for (const u of out.updates) {
-      const claim = { text: u.text, kind: u.kind, evidence: u.evidence };
+      const claim = { text: u.text, kind: u.kind, evidence: u.evidence, ...(u.code?.trim() ? { code: u.code } : {}) };
       const target = byId.get(u.replaces);
       if (target && target.reason !== "yours" && !replaced.has(u.replaces)) replaced.set(u.replaces, claim);
       else if (!u.replaces) added.push({ heading: u.section.trim() || before.sections[before.sections.length - 1]?.heading || "More", claim });

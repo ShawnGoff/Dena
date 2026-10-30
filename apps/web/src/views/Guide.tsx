@@ -30,7 +30,8 @@ export function Guide({ projectId, openEpisode, onEpisode, onEvent }: {
 
   if (!eps) return <Loading />;
   if (!eps.length) return <div className="empty"><b>Nothing to explain yet</b>Record some work first.</div>;
-  const list = onlyChanges ? eps.filter((e) => e.stats.fileChanges || e.stats.commits || e.stats.tests || e.explained || e.id === openEpisode) : eps;
+  // Steps worth following change something; questions and "yes, go ahead" do not.
+  const list = onlyChanges ? eps.filter((e) => e.stats.fileChanges || e.stats.commits || e.stats.tests || e.id === openEpisode) : eps;
   const current = eps.find((e) => e.id === openEpisode) ?? list[0] ?? eps[0]!;
   const markExplained = (id: string) => setEps((all) => all?.map((e) => (e.id === id ? { ...e, explained: true } : e)) ?? null);
 
@@ -40,14 +41,22 @@ export function Guide({ projectId, openEpisode, onEpisode, onEvent }: {
         <ModelSettings projectId={projectId} />
         <AboutGuide projectId={projectId} />
         <label className="toggle" style={{ padding: "0 8px 10px" }}>
-          <input type="checkbox" checked={onlyChanges} onChange={(e) => setOnlyChanges(e.target.checked)} /> only episodes that changed something
+          <input type="checkbox" checked={onlyChanges} onChange={(e) => setOnlyChanges(e.target.checked)} /> only steps that changed something
         </label>
-        {list.map((e) => (
-          <button key={e.id} className={`toc-item ${e.id === current.id ? "active" : ""}`} onClick={() => onEpisode(e.id)}>
-            <span className="faint mono">#{e.position}</span>
-            <span className="toc-title">{e.title}</span>
-            {e.explained && <span className="toc-done" title="Explained">●</span>}
-          </button>
+        {list.map((e, i) => (
+          <div key={e.id}>
+            {e.chapter && e.chapter.key !== list[i - 1]?.chapter?.key && (
+              <div className="chapter-head">
+                <span>Chapter {chapterNo(list, i)} · {when(e.chapter.startedAt).replace(/,.*$/, "")}</span>
+                {e.chapter.areas.length > 0 && <span className="mono faint">{e.chapter.areas.join(", ")}</span>}
+              </div>
+            )}
+            <button className={`toc-item ${e.id === current.id ? "active" : ""}`} onClick={() => onEpisode(e.id)}>
+              <span className="faint mono">#{e.position}</span>
+              <span className="toc-title" title={e.stepTitle ? `You asked: ${e.title}` : undefined}>{e.stepTitle ?? e.title}</span>
+              {e.explained && <span className="toc-done" style={e.instructions ? undefined : { color: "var(--text-faint)" }} title={e.instructions ? "Written as instructions" : "Explained as a story; open it to rewrite as instructions"}>●</span>}
+            </button>
+          </div>
         ))}
       </nav>
       <div className="guide-main">
@@ -55,6 +64,13 @@ export function Guide({ projectId, openEpisode, onEpisode, onEvent }: {
       </div>
     </div>
   );
+}
+
+/** Chapters are counted over the whole list shown, so numbers stay steady while you browse. */
+function chapterNo(list: Episode[], i: number): number {
+  let n = 0;
+  for (let j = 0; j <= i; j++) if (list[j]!.chapter && list[j]!.chapter!.key !== list[j - 1]?.chapter?.key) n++;
+  return n;
 }
 
 function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: string; ep: Episode; onEvent: (id: number) => void; onExplained: () => void }) {
@@ -157,6 +173,13 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
         <>
           <DocBar projectId={projectId} type="step" docKey={ep.id} doc={doc} onChanged={() => { onExplained(); load(); }} viewing={viewing} onView={setViewing} allowContext
             onRewrite={() => explain(undefined, true)} projectModel={info.settings.model} />
+          {!viewing && x && x.step.generatedBy === "model" && !x.step.instructions?.length && !doc.proposed && (
+            <div className="notice" style={{ marginBottom: 14 }}>
+              This step was written as a story, before steps became instructions you can follow.{" "}
+              <button className="btn" disabled={!!busy} onClick={() => explain(undefined, true)}>{busy ? "Rewriting…" : "Rewrite as instructions"}</button>
+              <span className="faint small"> Uses about as many tokens as explaining it the first time. Your notes are used; your edits stay in the history.</span>
+            </div>
+          )}
           {historical && <HistoricalVersion projectId={projectId} docKey={ep.id} id={viewing!} onRef={onEvent} />}
           {x && <StepView x={x} onRef={onEvent} editable={!viewing} onChange={saveEdit} onMarkIncorrect={markIncorrect} />}
           {!viewing && <HowBuilt projectId={projectId} type="step" docKey={ep.id} onEvent={onEvent} />}

@@ -1,5 +1,5 @@
 import type { Packet } from "./packet.ts";
-import type { Claim, Step } from "./schema.ts";
+import { STEP_CLAIM_SECTIONS, type Claim, type Step } from "./schema.ts";
 
 /**
  * Programmatic checks on a generated step. They catch a known set of mistakes; passing them
@@ -25,7 +25,7 @@ export interface Validation {
   autoFixes?: string[];
 }
 
-const SECTIONS = ["whatHappened", "whyItMattered", "howItWorks", "whatChanged", "decisions", "verification"] as const;
+const SECTIONS = [...STEP_CLAIM_SECTIONS, "whatChanged", "verification"] as const;
 /**
  * Claims about a test outcome ("tests passed", "the suite failed", "all 33 pass"). Descriptions
  * such as "the failing test" or "fix the failure" are not outcome claims: matching them removed
@@ -34,12 +34,16 @@ const SECTIONS = ["whatHappened", "whyItMattered", "howItWorks", "whatChanged", 
 const PASS = /\b(?:tests?|suite|run|checks?)\b[^.;]{0,40}\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|went green)\b|\ball (?:\d+ )?(?:tests? )?pass(?:ed|es)?\b|\b\d+ (?:tests? )?passed\b/i;
 const FAIL = /\b(?:tests?|suite|run|checks?)\b[^.;]{0,40}\b(?:fail(?:s|ed)?|broke)\b|\b\d+ (?:tests? )?failed\b/i;
 
+/** Code compared line by line, ignoring indentation and diff markers. */
+const normCode = (l: string) => l.replace(/^[+\- ](?=\s*\S)/, "").replace(/\s+/g, " ").trim();
+
 export function validateStep(step: Step, packet: Packet, opts: { depth?: "concise" | "thorough" } = {}): Validation {
   const issues: Issue[] = [];
   const items = new Map(packet.items.map((i) => [i.ref, i]));
   const counts = { observed: 0, inferred: 0, agent_stated: 0, owner_stated: 0, background: 0 };
   let specific = 0, wellCited = 0;
 
+  const evidenceCode = packet.items.map((i) => i.text.split("\n").map(normCode).join("\n")).join("\n");
   for (const section of SECTIONS) {
     for (const c of step[section]) {
       counts[c.kind]++;
@@ -81,6 +85,14 @@ export function validateStep(step: Step, packet: Packet, opts: { depth?: "concis
           if (!citedText.includes(base)) issues.push({ severity: "error", section, claim: short, message: `names ${f}, which is not in the cited evidence` });
         }
       }
+
+      // Code in an instruction should be copied from the evidence, not written from memory.
+      if (c.code?.trim()) {
+        const lines = c.code.split("\n").map(normCode).filter((l) => l.length >= 8);
+        const found = lines.filter((l) => evidenceCode.includes(l)).length;
+        if (lines.length && found / lines.length < 0.5)
+          issues.push({ severity: "warning", section, claim: short, message: "its code is not in the captured evidence; it may be reconstructed or from a part that was cut" });
+      }
     }
   }
 
@@ -90,13 +102,15 @@ export function validateStep(step: Step, packet: Packet, opts: { depth?: "concis
   const minHow = opts.depth === "concise" ? 150 : 400;
   if (step.generatedBy !== "facts" && substantial && howChars < minHow)
     issues.push({ severity: "warning", section: "howItWorks", message: `only ${howChars} characters; the mechanism is not really explained` });
+  if (step.generatedBy !== "facts" && substantial && !step.instructions.length)
+    issues.push({ severity: "warning", section: "instructions", message: "no steps to follow; this reads as a report, not a guide" });
   if (packet.truncated && !step.uncertainty.some((u) => /truncat|not included|cut|partial/i.test(u)))
     issues.push({ severity: "warning", section: "uncertainty", message: "evidence was truncated but the step does not say so" });
 
   return { ok: !issues.some((i) => i.severity === "error"), issues, counts, citedShare: specific ? wellCited / specific : 1 };
 }
 
-const MODEL_SECTIONS = ["whatHappened", "whyItMattered", "howItWorks", "decisions"] as const;
+const MODEL_SECTIONS = STEP_CLAIM_SECTIONS;
 
 /**
  * Fixes check failures without another model call, but only in ways that make the step say

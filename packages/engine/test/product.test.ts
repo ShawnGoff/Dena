@@ -39,7 +39,7 @@ afterEach(() => {
 
 describe("product guide", () => {
   it("is a wiki page, built from the project's current files and what the owner asked for", () => {
-    expect(sectionKeys(store, pid).map((s) => s.key).slice(0, 3)).toEqual(["overview", "product", "architecture"]);
+    expect(sectionKeys(store, pid).map((s) => s.key).slice(0, 4)).toEqual(["overview", "product", "tutorial", "architecture"]);
     const code = productCodeSources(store, pid);
     expect(code.map((c) => c.files![0])).toEqual(["README.md", "README.md", "package.json", "src/cli.ts"]); // the near-empty "Tiny" section is skipped
     expect(code[1]!.text).toContain('Section "Install"');

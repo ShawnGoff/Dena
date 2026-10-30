@@ -88,10 +88,26 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
       const evidence = (rev!.meta.evidence ?? {}) as Record<string, { eventIds: number[]; kind: string }>;
       const prefix = `ep${e.position}`;
       out.push("", `### ${e.position}. ${st.title}`, "", `*${e.startedAt.slice(0, 16).replace("T", " ")} UTC${rev!.meta.model ? ` · written by ${rev!.meta.model}` : ""}${rev!.meta.userEdited ? " · includes the owner's edits" : ""}*`, "", st.summary);
-      const sections: [string, string][] = [["whatHappened", "What happened"], ["whyItMattered", "Why it mattered"], ["howItWorks", "How it works"],
+      const link = (r: string) => `[${r}](#${prefix}-${r.toLowerCase()})`;
+      if (st.goal) out.push("", `**What you'll build:** ${st.goal}`);
+      const instructions = (st.instructions ?? []) as Claim[];
+      const guide: [string, string][] = [["prerequisites", "Before you start"], ["check", "Check it works"], ["pitfalls", "If it goes wrong"]];
+      if ((st.prerequisites as Claim[])?.length) out.push("", "**Before you start**", "", ...(st.prerequisites as Claim[]).map((c) => claimLine(c, link)));
+      if (instructions.length) {
+        out.push("", "**Steps**", "");
+        instructions.forEach((c, i) => {
+          out.push(claimLine(c, link).replace(/^- /, `${i + 1}. `));
+          if (c.code) out.push("", "   ```", ...c.code.split("\n").map((l) => `   ${l}`), "   ```", "");
+        });
+      }
+      for (const [k, label] of guide.slice(1))
+        if ((st[k] as Claim[])?.length) out.push("", `**${label}**`, "", ...(st[k] as Claim[]).map((c) => claimLine(c, link)));
+      const story: [string, string][] = [["whatHappened", "What happened"], ["whyItMattered", "Why it mattered"], ["howItWorks", "How it works"],
         ["whatChanged", "What changed"], ["decisions", "Decisions"], ["verification", "Verification"]];
-      for (const [k, label] of sections)
-        if ((st[k] as Claim[])?.length) out.push("", `**${label}**`, "", ...(st[k] as Claim[]).map((c) => claimLine(c, (r) => `[${r}](#${prefix}-${r.toLowerCase()})`)));
+      const sections: [string, string][] = [...guide, ["instructions", "Steps"], ...story];
+      if (instructions.length) out.push("", "#### How the AI did it");
+      for (const [k, label] of story)
+        if ((st[k] as Claim[])?.length) out.push("", `**${label}**`, "", ...(st[k] as Claim[]).map((c) => claimLine(c, link)));
       const uncertain = ((st.uncertainty ?? []) as string[]).filter((u) => !isStandingLimitationText(u));
       if (uncertain.length) out.push("", "**What is uncertain**", "", ...uncertain.map((u) => `- ${u}`));
       const concepts = (st.concepts ?? []) as { term: string; explanation: string }[];

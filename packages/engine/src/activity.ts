@@ -143,8 +143,7 @@ function fold(entries: ActivityEntry[]): ActivityEntry[] {
 
 const NEAR_MS = 30 * 60_000;
 
-export function buildActivityLog(store: Store, projectId: string, opts: { sessionId?: string } = {}): ActivitySession[] {
-  const events = store.timeline(projectId);
+function activityContext(store: Store, projectId: string, events: StoredEvent[]): Ctx {
   const byId = new Map(events.map((e) => [e.id, e]));
   const linksIn = new Map<number, { from: number; type: string }[]>();
   const linksOut = new Map<number, { to: number; type: string }[]>();
@@ -153,7 +152,26 @@ export function buildActivityLog(store: Store, projectId: string, opts: { sessio
     linksIn.set(r.t, [...(linksIn.get(r.t) ?? []), { from: r.f, type: r.k }]);
     linksOut.set(r.f, [...(linksOut.get(r.f) ?? []), { to: r.t, type: r.k }]);
   }
-  const ctx: Ctx = { byId, linksIn, linksOut, likely: likelyAuthors(store, projectId) };
+  return { byId, linksIn, linksOut, likely: likelyAuthors(store, projectId) };
+}
+
+/**
+ * The plain-language log for any set of events (one episode, say), told the same way as the
+ * session log. Related events outside the set (a tool call's result) are looked up as needed.
+ */
+export function activityForEvents(store: Store, projectId: string, events: StoredEvent[], id = "selection"): ActivitySession {
+  const ids = new Set(events.map((e) => e.id));
+  const related = store.db
+    .prepare(`SELECT DISTINCT CASE WHEN from_event_id IN (SELECT value FROM json_each(?)) THEN to_event_id ELSE from_event_id END id FROM event_link
+              WHERE from_event_id IN (SELECT value FROM json_each(?)) OR to_event_id IN (SELECT value FROM json_each(?))`)
+    .all(JSON.stringify([...ids]), JSON.stringify([...ids]), JSON.stringify([...ids])) as { id: number }[];
+  const extra = store.eventsById(projectId, related.map((r) => r.id).filter((x) => !ids.has(x)));
+  return buildSession(activityContext(store, projectId, [...events, ...extra]), id, [...events], new Set());
+}
+
+export function buildActivityLog(store: Store, projectId: string, opts: { sessionId?: string } = {}): ActivitySession[] {
+  const events = store.timeline(projectId);
+  const ctx = activityContext(store, projectId, events);
 
   // Claude sessions; watcher and git events join the session with a captured event nearest to them
   // (within NEAR_MS). A resumed session can span days, so its overall span would claim unrelated changes.
@@ -181,69 +199,69 @@ export function buildActivityLog(store: Store, projectId: string, opts: { sessio
   }
 
   const accounted = new Set<number>(); // events already shown as part of a tool call's line
-  const build = (id: string, evs: StoredEvent[]): ActivitySession => {
-    evs.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id - b.id);
-    const entries: ActivityEntry[] = [];
-    for (const e of evs) {
-      if (accounted.has(e.id)) continue;
-      const p = e.payload as Record<string, any>;
-      const who: ActivityEntry["who"] = e.actor === "user" ? "you" : p.sidechain ? "subagent" : e.actor === "ai_agent" ? "ai" : e.actor === "automated_tool" ? "tool" : "unknown";
-      let entry: ActivityEntry | null = null;
-      switch (e.eventType) {
-        case "prompt_submitted":
-          entry = { at: e.occurredAt, kind: "prompt", who: e.actor === "user" ? "you" : "subagent", text: e.actor === "user" ? `You asked: “${clip(String(p.text ?? e.summary), 160)}”` : `The AI asked a helper agent: “${clip(String(p.text ?? ""), 120)}”`, count: 1, eventIds: [e.id] };
-          break;
-        case "ai_response_received":
-          entry = { at: e.occurredAt, kind: "reply", who, text: `Replied: “${clip(String(p.text ?? e.summary), 160)}”`, count: 1, eventIds: [e.id] };
-          break;
-        case "tool_invoked": {
-          entry = toolEntry(ctx, e, who);
-          const r = related(ctx, e.id);
-          [r.result, r.hook, r.file, r.commit].forEach((x) => x && accounted.add(x.id));
-          break;
-        }
-        case "agent_note":
-          entry = { at: e.occurredAt, kind: "note", who, text: `Noted (${p.kind}): ${clip(String(p.text ?? ""), 200)}`, detail: "the AI's own account of its reasoning", count: 1, eventIds: [e.id] };
-          break;
-        case "error_detected":
-          if (e.source === "claude_code.transcript" && !String(p.subtype ?? "").includes("api")) break; // tool failures are shown on their tool line
-          entry = { at: e.occurredAt, kind: "error", who: "tool", text: e.summary, status: "failed", count: 1, eventIds: [e.id] };
-          break;
-        case "file_created":
-        case "file_modified":
-        case "file_deleted": {
-          const verb = e.eventType === "file_created" ? "created" : e.eventType === "file_deleted" ? "deleted" : "changed";
-          entry = { at: e.occurredAt, kind: "file", who: "unknown", text: `${String(p.file)} ${verb}${p.linesAdded || p.linesRemoved ? ` (+${p.linesAdded ?? 0} −${p.linesRemoved ?? 0})` : ""}`,
-            detail: ctx.likely.get(e.id) ? `${ctx.likely.get(e.id)!.confidence === "likely" ? "likely" : "possibly"} the AI: ${ctx.likely.get(e.id)!.basis}` : "seen by the file watcher; author unknown",
-            count: 1, eventIds: [e.id], likelyAuthor: ctx.likely.get(e.id) ?? null };
-          break;
-        }
-        case "git_commit":
-          entry = { at: e.occurredAt, kind: "commit", who: "unknown", text: `Commit ${String(p.sha).slice(0, 7)} “${clip(String(p.message ?? "").split("\n")[0] ?? "", 80)}”`,
-            detail: `${(p.files ?? []).length} files${ctx.likely.get(e.id) ? " · likely made by the AI" : ""}`, count: 1, eventIds: [e.id], likelyAuthor: ctx.likely.get(e.id) ?? null };
-          break;
-        case "branch_changed":
-          entry = { at: e.occurredAt, kind: "branch", who: "unknown", text: e.summary, count: 1, eventIds: [e.id] };
-          break;
-        case "session_marker":
-          if (e.source === "claude_code.hooks" || /compacted/.test(e.summary)) entry = { at: e.occurredAt, kind: "session", who: "tool", text: e.summary, count: 1, eventIds: [e.id] };
-          break;
-      }
-      if (entry) entries.push(entry);
-    }
-    const folded = fold(entries);
-    const n = (k: ActivityKind) => folded.filter((x) => x.kind === k).length;
-    return {
-      id, startedAt: evs[0]?.occurredAt ?? "", endedAt: evs[evs.length - 1]?.occurredAt ?? "",
-      stats: { prompts: entries.filter((x) => x.kind === "prompt" && x.who === "you").length, edits: n("edit"), commands: n("command"), tests: n("test"),
-        testFailures: folded.filter((x) => x.kind === "test" && x.status === "failed").length, commits: n("commit"), notes: n("note"), fileChanges: n("file") },
-      entries: folded,
-    };
-  };
-
-  const sessions = [...sessionsById.entries()].filter(([id]) => !opts.sessionId || id === opts.sessionId).map(([id, s]) => build(id, s.events));
-  if (!opts.sessionId && other.length) sessions.push(build("outside", other));
+  const sessions = [...sessionsById.entries()].filter(([id]) => !opts.sessionId || id === opts.sessionId).map(([id, s]) => buildSession(ctx, id, s.events, accounted));
+  if (!opts.sessionId && other.length) sessions.push(buildSession(ctx, "outside", other, accounted));
   return sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt)); // newest first
+}
+
+function buildSession(ctx: Ctx, id: string, evs: StoredEvent[], accounted: Set<number>): ActivitySession {
+  evs.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id - b.id);
+  const entries: ActivityEntry[] = [];
+  for (const e of evs) {
+    if (accounted.has(e.id)) continue;
+    const p = e.payload as Record<string, any>;
+    const who: ActivityEntry["who"] = e.actor === "user" ? "you" : p.sidechain ? "subagent" : e.actor === "ai_agent" ? "ai" : e.actor === "automated_tool" ? "tool" : "unknown";
+    let entry: ActivityEntry | null = null;
+    switch (e.eventType) {
+      case "prompt_submitted":
+        entry = { at: e.occurredAt, kind: "prompt", who: e.actor === "user" ? "you" : "subagent", text: e.actor === "user" ? `You asked: “${clip(String(p.text ?? e.summary), 160)}”` : `The AI asked a helper agent: “${clip(String(p.text ?? ""), 120)}”`, count: 1, eventIds: [e.id] };
+        break;
+      case "ai_response_received":
+        entry = { at: e.occurredAt, kind: "reply", who, text: `Replied: “${clip(String(p.text ?? e.summary), 160)}”`, count: 1, eventIds: [e.id] };
+        break;
+      case "tool_invoked": {
+        entry = toolEntry(ctx, e, who);
+        const r = related(ctx, e.id);
+        [r.result, r.hook, r.file, r.commit].forEach((x) => x && accounted.add(x.id));
+        break;
+      }
+      case "agent_note":
+        entry = { at: e.occurredAt, kind: "note", who, text: `Noted (${p.kind}): ${clip(String(p.text ?? ""), 200)}`, detail: "the AI's own account of its reasoning", count: 1, eventIds: [e.id] };
+        break;
+      case "error_detected":
+        if (e.source === "claude_code.transcript" && !String(p.subtype ?? "").includes("api")) break; // tool failures are shown on their tool line
+        entry = { at: e.occurredAt, kind: "error", who: "tool", text: e.summary, status: "failed", count: 1, eventIds: [e.id] };
+        break;
+      case "file_created":
+      case "file_modified":
+      case "file_deleted": {
+        const verb = e.eventType === "file_created" ? "created" : e.eventType === "file_deleted" ? "deleted" : "changed";
+        entry = { at: e.occurredAt, kind: "file", who: "unknown", text: `${String(p.file)} ${verb}${p.linesAdded || p.linesRemoved ? ` (+${p.linesAdded ?? 0} −${p.linesRemoved ?? 0})` : ""}`,
+          detail: ctx.likely.get(e.id) ? `${ctx.likely.get(e.id)!.confidence === "likely" ? "likely" : "possibly"} the AI: ${ctx.likely.get(e.id)!.basis}` : "seen by the file watcher; author unknown",
+          count: 1, eventIds: [e.id], likelyAuthor: ctx.likely.get(e.id) ?? null };
+        break;
+      }
+      case "git_commit":
+        entry = { at: e.occurredAt, kind: "commit", who: "unknown", text: `Commit ${String(p.sha).slice(0, 7)} “${clip(String(p.message ?? "").split("\n")[0] ?? "", 80)}”`,
+          detail: `${(p.files ?? []).length} files${ctx.likely.get(e.id) ? " · likely made by the AI" : ""}`, count: 1, eventIds: [e.id], likelyAuthor: ctx.likely.get(e.id) ?? null };
+        break;
+      case "branch_changed":
+        entry = { at: e.occurredAt, kind: "branch", who: "unknown", text: e.summary, count: 1, eventIds: [e.id] };
+        break;
+      case "session_marker":
+        if (e.source === "claude_code.hooks" || /compacted/.test(e.summary)) entry = { at: e.occurredAt, kind: "session", who: "tool", text: e.summary, count: 1, eventIds: [e.id] };
+        break;
+    }
+    if (entry) entries.push(entry);
+  }
+  const folded = fold(entries);
+  const n = (k: ActivityKind) => folded.filter((x) => x.kind === k).length;
+  return {
+    id, startedAt: evs[0]?.occurredAt ?? "", endedAt: evs[evs.length - 1]?.occurredAt ?? "",
+    stats: { prompts: entries.filter((x) => x.kind === "prompt" && x.who === "you").length, edits: n("edit"), commands: n("command"), tests: n("test"),
+      testFailures: folded.filter((x) => x.kind === "test" && x.status === "failed").length, commits: n("commit"), notes: n("note"), fileChanges: n("file") },
+    entries: folded,
+  };
 }
 
 /** One session's log as Markdown, for sharing or keeping. */

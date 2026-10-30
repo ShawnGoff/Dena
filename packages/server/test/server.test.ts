@@ -301,3 +301,14 @@ describe("code explainers API", () => {
     }
   });
 });
+
+describe("how the AI built this API", () => {
+  it("serves a step's process and a page's, and 404s anything else", async () => {
+    const [ep] = (await req(`/api/projects/${pid}/episodes`)).json;
+    const step = await req(`/api/projects/${pid}/how-built?type=step&key=${ep.id}`);
+    expect(step.status).toBe(200);
+    expect(step.json.scope).toBe("this episode");
+    expect((await req(`/api/projects/${pid}/how-built?type=wiki&key=overview`)).json.scope).toBe("the whole project");
+    expect((await req(`/api/projects/${pid}/how-built?type=wiki&key=nope`)).status).toBe(404);
+  });
+});

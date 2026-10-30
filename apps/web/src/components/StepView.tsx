@@ -70,7 +70,7 @@ export function StepView({ x, onRef, editable, onChange, onMarkIncorrect }: {
       )}
       {s.concepts.length > 0 && (
         <section className="step-section">
-          <h3>Concepts to understand</h3>
+          <h3>What you can learn here</h3>
           <dl className="concepts">
             {s.concepts.map((c) => <div key={c.term}><dt>{c.term}</dt><dd>{c.explanation}</dd></div>)}
           </dl>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Claim, type Episode, type ExplanationInfo, type Step, type StoredExplanation } from "../api";
 import { DocBar, type DocResponse } from "../components/DocBar";
+import { HowBuilt } from "../components/HowBuilt";
 import { AboutGuide } from "../components/AboutGuide";
 import { ModelSettings } from "../components/ModelSettings";
 import { BusyBar } from "../components/BusyBar";
@@ -156,6 +157,7 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
             onRewrite={() => explain(undefined, true)} projectModel={info.settings.model} />
           {historical && <HistoricalVersion projectId={projectId} docKey={ep.id} id={viewing!} onRef={onEvent} />}
           {x && <StepView x={x} onRef={onEvent} editable={!viewing} onChange={saveEdit} onMarkIncorrect={markIncorrect} />}
+          {!viewing && <HowBuilt projectId={projectId} type="step" docKey={ep.id} onEvent={onEvent} />}
           {!viewing && x?.step.generatedBy !== "facts" && (
             <div className="explain-more">
               <span className="muted">Want a more precise explanation? Stronger models use more of your plan.</span>

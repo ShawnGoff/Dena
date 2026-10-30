@@ -12,7 +12,7 @@ import type { Store } from "@dena/core";
 /** Before calibration. Overhead: a 30-character call reported ~780 tokens (Claude Code 2.1.309), plus the output schema. */
 export const DEFAULT_OVERHEAD_TOKENS = 2_000;
 export const DEFAULT_CHARS_PER_TOKEN = 3.3; // evidence is mostly code, diffs and paths, which tokenize denser than prose
-export const DEFAULT_OUTPUT_TOKENS = { thorough: 6_000, concise: 3_500, wiki: 6_500, code: 4_000 } as const; // includes hidden reasoning, which models report as output
+export const DEFAULT_OUTPUT_TOKENS = { thorough: 6_000, concise: 2_500, wiki: 6_500, code: 4_000 } as const; // includes hidden reasoning, which models report as output
 export const DEFAULT_CALLS_PER_DOC = 1.5; // checks often ask for one repair
 const MIN_SAMPLES = 3;
 
@@ -29,17 +29,24 @@ export interface Calibration {
 
 interface Sample { chars: number; calls: number; prompt: number; output: number; kind: "thorough" | "concise" | "wiki" | "code" }
 
+/**
+ * Only recent calls count: how Dena asks changes over time (one-turn answers, shorter steps), and
+ * old, more expensive calls would otherwise keep the estimates high long after.
+ */
+const RECENT = 15;
+
 function samples(store: Store, model: string): Sample[] {
   const match = "(requested_model = @m OR model = @m)";
+  const recent = `ORDER BY id DESC LIMIT ${RECENT}`;
   const steps = store.db
     .prepare(`SELECT input_chars c, attempts a, prompt_tokens p, output_tokens o, depth d FROM explanation
-              WHERE generated_by = 'model' AND batched = 0 AND prompt_tokens > 0 AND input_chars > 0 AND ${match}`)
+              WHERE generated_by = 'model' AND batched = 0 AND prompt_tokens > 0 AND input_chars > 0 AND ${match} ${recent}`)
     .all({ m: model }) as { c: number; a: number; p: number; o: number; d: string }[];
   const wiki = store.db
-    .prepare(`SELECT input_chars c, attempts a, prompt_tokens p, output_tokens o FROM wiki_section WHERE prompt_tokens > 0 AND input_chars > 0 AND ${match}`)
+    .prepare(`SELECT input_chars c, attempts a, prompt_tokens p, output_tokens o FROM wiki_section WHERE prompt_tokens > 0 AND input_chars > 0 AND ${match} ${recent}`)
     .all({ m: model }) as { c: number; a: number; p: number; o: number }[];
   const code = store.db
-    .prepare(`SELECT input_chars c, attempts a, prompt_tokens p, output_tokens o FROM code_call WHERE prompt_tokens > 0 AND input_chars > 0 AND ${match}`)
+    .prepare(`SELECT input_chars c, attempts a, prompt_tokens p, output_tokens o FROM code_call WHERE prompt_tokens > 0 AND input_chars > 0 AND ${match} ${recent}`)
     .all({ m: model }) as { c: number; a: number; p: number; o: number }[];
   return [
     ...steps.map((r) => ({ chars: r.c, calls: r.a, prompt: r.p, output: r.o, kind: (r.d === "concise" ? "concise" : "thorough") as Sample["kind"] })),

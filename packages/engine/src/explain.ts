@@ -140,7 +140,7 @@ export async function explainEpisode(store: Store, projectId: string, unitId: st
   let sentChars = prompt.length + system.length;
   let step = assemble(ModelStep.parse(res.json), packet);
   let validation = validateStep(step, packet, { depth });
-  let attempts = 1;
+  let attempts = res.calls ?? 1; // a format retry inside the provider counts as a call
   let repairReasons: Validation["issues"] | undefined;
   if (!validation.ok) {
     // Small problems are fixed here by weakening or removing statements; a repair call only when that would strip too much.
@@ -161,7 +161,7 @@ export async function explainEpisode(store: Store, projectId: string, unitId: st
     sentChars += repair.length + system.length;
     step = assemble(ModelStep.parse(res.json), packet);
     validation = { ...validateStep(step, packet, { depth }), repairReasons };
-    attempts = 2;
+    attempts += res.calls ?? 1;
   }
   const x: Explanation = { unitId, step, validation, evidence: evidenceMap(packet), model: res.model, costUsd: cost, tokens, cached: false, attempts, batched: false, packetHash: packet.hash };
   save(store, projectId, x, { requestedModel: model, depth, inputChars: sentChars });

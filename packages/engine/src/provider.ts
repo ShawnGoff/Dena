@@ -36,6 +36,8 @@ export interface GenerateResult {
   durationMs: number;
   /** Real token counts, when the backend reports them. */
   tokens?: TokenUsage | null;
+  /** Model calls made to get this answer (a retry or the fallback adds one each). */
+  calls?: number;
 }
 
 export interface Provider {
@@ -43,8 +45,9 @@ export interface Provider {
   /**
    * `opts.model`: any model name or alias the backend accepts; omitted = the backend's default.
    * `opts.signal`: aborting it stops the call; the promise then rejects with a StoppedError.
+   * `opts.effort`: how much hidden reasoning this call may spend, when the backend supports it.
    */
-  generate(system: string, user: string, schema: object, opts?: { model?: string; signal?: AbortSignal }): Promise<GenerateResult>;
+  generate(system: string, user: string, schema: object, opts?: { model?: string; signal?: AbortSignal; effort?: string }): Promise<GenerateResult>;
 }
 
 /** Raised when the owner stops a generation. Nothing from the stopped call is saved. */
@@ -110,27 +113,57 @@ export function explainFailure(result: string, auth: ClaudeAuth): string {
   return `Claude Code error: ${result.slice(0, 200)}`;
 }
 
+/**
+ * How answers come back:
+ * - "text" (default): the model answers in one turn with plain JSON, which Dena checks against the
+ *   schema itself. Measured on a real step: about a third of the tokens sent and a quarter of the
+ *   tokens written, compared with "tool".
+ * - "tool": Claude Code's structured output. It guarantees the shape, but takes two turns: the
+ *   second re-sends the whole prompt and the model's own answer. Used as the last resort.
+ */
+export type AnswerMode = "text" | "tool";
+
+interface CallResult { text: string; json: unknown; model: string | null; costUsd: number | null; durationMs: number; tokens: TokenUsage | null }
+
 export class ClaudeCodeProvider implements Provider {
   readonly name: string;
   constructor(
     private readonly bin = findClaudeBinary(),
-    private readonly opts: { model?: string; timeoutMs?: number; auth?: ClaudeAuth; effort?: string } = {},
+    private readonly opts: { model?: string; timeoutMs?: number; auth?: ClaudeAuth; effort?: string; answers?: AnswerMode } = {},
   ) {
     this.name = `claude-code (${(opts.auth ?? "account") === "account" ? "your Claude account" : "API key"})`;
     if (!this.bin) throw new Error("Could not find Claude Code. Install it, or set DENA_CLAUDE_BIN to its path.");
   }
 
-  generate(system: string, user: string, schema: object, callOpts: { model?: string; signal?: AbortSignal } = {}): Promise<GenerateResult> {
+  async generate(system: string, user: string, schema: object, callOpts: { model?: string; signal?: AbortSignal; effort?: string } = {}): Promise<GenerateResult> {
+    if ((this.opts.answers ?? "text") === "tool") return finish([await this.call(system, user, schema, callOpts)]);
+    const sys = `${system}\n\n${jsonAnswerInstructions(schema)}`;
+    const calls: CallResult[] = [];
+    let ask = user;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const r = await this.call(sys, ask, null, callOpts);
+      calls.push(r);
+      const parsed = parseJsonAnswer(r.text);
+      const problems = parsed.ok ? checkAgainstSchema(parsed.value, schema) : [parsed.error];
+      if (!problems.length) return finish(calls, parsed.ok ? parsed.value : undefined);
+      // One retry, saying exactly what was wrong. The prompt is the same, so it is mostly read from cache.
+      ask = `${user}\n\nYour previous answer could not be used: ${problems.slice(0, 8).join("; ")}. Answer again with only the JSON object.`;
+    }
+    calls.push(await this.call(system, user, schema, callOpts)); // last resort: the structured-output tool, which enforces the shape
+    return finish(calls);
+  }
+
+  private call(system: string, user: string, schema: object | null, callOpts: { model?: string; signal?: AbortSignal; effort?: string }): Promise<CallResult> {
     if (callOpts.signal?.aborted) return Promise.reject(new StoppedError());
     const model = callOpts.model ?? this.opts.model;
     const args = [
-      "-p", "--output-format", "json", "--json-schema", JSON.stringify(schema),
+      "-p", "--output-format", "json", ...(schema ? ["--json-schema", JSON.stringify(schema)] : []),
       "--system-prompt", system,
       "--tools", "", // the model explains the evidence it is given; it cannot read files or run anything
       "--no-session-persistence", // Dena's own calls never become transcripts
       "--strict-mcp-config", "--disable-slash-commands",
       ...(model ? ["--model", model] : []), // default: the user's configured model
-      ...(this.opts.effort ? ["--effort", this.opts.effort] : []), // how much hidden reasoning the model may spend
+      ...((callOpts.effort ?? this.opts.effort) ? ["--effort", (callOpts.effort ?? this.opts.effort)!] : []), // how much hidden reasoning the model may spend
     ];
     // A neutral working directory keeps project-level hooks and settings out of the call.
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "dena-gen-"));
@@ -177,18 +210,89 @@ export class ClaudeCodeProvider implements Provider {
         }
         if (o.is_error || o.subtype !== "success") return reject(new Error(explainFailure(String(o.result ?? o.subtype ?? ""), auth)));
         let json = o.structured_output;
-        if (json === undefined) {
+        if (schema && json === undefined) {
           try {
             json = JSON.parse(o.result);
           } catch {
             return reject(new Error("Claude Code did not return structured output"));
           }
         }
-        resolve({ json, model: Object.keys(o.modelUsage ?? {})[0] ?? null, costUsd: o.total_cost_usd ?? null, durationMs: o.duration_ms ?? 0,
+        resolve({ text: String(o.result ?? ""), json, model: Object.keys(o.modelUsage ?? {})[0] ?? null, costUsd: o.total_cost_usd ?? null, durationMs: o.duration_ms ?? 0,
           tokens: tokensFromUsage(o.usage) });
       });
       child.stdin.end(user);
     });
+  }
+}
+
+/** One result from several calls: the last answer, with every call's tokens, cost and time added up. */
+function finish(calls: CallResult[], json?: unknown): GenerateResult {
+  const last = calls[calls.length - 1]!;
+  const tokens = calls.every((c) => c.tokens) ? calls.slice(1).reduce((t, c) => addTokens(t, c.tokens), calls[0]!.tokens!) : null;
+  const cost = calls.some((c) => c.costUsd != null) ? calls.reduce((n, c) => n + (c.costUsd ?? 0), 0) : null;
+  return { json: json ?? last.json, model: last.model, costUsd: cost, durationMs: calls.reduce((n, c) => n + c.durationMs, 0), tokens, calls: calls.length };
+}
+
+// ---- plain JSON answers ----
+
+/** The answer format, told compactly (a JSON Schema costs several times the tokens to say the same). */
+export function jsonAnswerInstructions(schema: object): string {
+  return `Answer with ONLY one JSON object: no prose before or after it, and no code fence. Its shape (TypeScript notation; every field is required):\n${describeSchema(schema)}`;
+}
+
+export function describeSchema(s: any, indent = ""): string {
+  if (!s || typeof s !== "object") return "unknown";
+  if (Array.isArray(s.enum)) return s.enum.map((v: unknown) => JSON.stringify(v)).join(" | ");
+  const note = s.description ? ` /* ${s.description} */` : s.pattern ? ` /* matching ${s.pattern} */` : "";
+  if (s.type === "string") return `string${note}`;
+  if (s.type === "number" || s.type === "integer") return `number${note}`;
+  if (s.type === "boolean") return "boolean";
+  if (s.type === "array") return `${wrapUnion(describeSchema(s.items, indent))}[]`;
+  if (s.type === "object") {
+    const inner = `${indent}  `;
+    const fields = Object.entries(s.properties ?? {}).map(([k, v]) => `${inner}${k}: ${describeSchema(v, inner)}`);
+    return `{\n${fields.join(",\n")}\n${indent}}`;
+  }
+  return "unknown";
+}
+const wrapUnion = (t: string) => (t.includes(" | ") ? `(${t})` : t);
+
+/** Reads the JSON object out of an answer, tolerating a code fence or a stray sentence around it. */
+export function parseJsonAnswer(text: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  const t = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+  const start = t.indexOf("{"), end = t.lastIndexOf("}");
+  if (start < 0 || end <= start) return { ok: false, error: "it contained no JSON object" };
+  try {
+    return { ok: true, value: JSON.parse(t.slice(start, end + 1)) };
+  } catch (e) {
+    return { ok: false, error: `it was not valid JSON (${(e as Error).message.slice(0, 80)})` };
+  }
+}
+
+/** Checks a value against the parts of JSON Schema Dena uses: types, required fields, enums and patterns. */
+export function checkAgainstSchema(v: unknown, s: any, at = "answer"): string[] {
+  if (!s || typeof s !== "object") return [];
+  if (Array.isArray(s.enum)) return s.enum.includes(v) ? [] : [`${at} must be one of ${s.enum.map((x: unknown) => JSON.stringify(x)).join(", ")}`];
+  switch (s.type) {
+    case "string":
+      if (typeof v !== "string") return [`${at} must be a string`];
+      return s.pattern && !new RegExp(s.pattern).test(v) ? [`${at} must match ${s.pattern}`] : [];
+    case "number":
+    case "integer":
+      return typeof v === "number" ? [] : [`${at} must be a number`];
+    case "boolean":
+      return typeof v === "boolean" ? [] : [`${at} must be true or false`];
+    case "array":
+      if (!Array.isArray(v)) return [`${at} must be an array`];
+      return v.flatMap((x, i) => checkAgainstSchema(x, s.items, `${at}[${i}]`));
+    case "object": {
+      if (!v || typeof v !== "object" || Array.isArray(v)) return [`${at} must be an object`];
+      const o = v as Record<string, unknown>;
+      const missing = ((s.required ?? []) as string[]).filter((k) => !(k in o)).map((k) => `${at}.${k} is missing`);
+      return [...missing, ...Object.entries(s.properties ?? {}).flatMap(([k, ps]) => (k in o ? checkAgainstSchema(o[k], ps, `${at}.${k}`) : []))];
+    }
+    default:
+      return [];
   }
 }
 

@@ -286,7 +286,7 @@ export class Store {
 
   projectSettings(id: string): ProjectSettings {
     const r = this.db.prepare("SELECT settings_json FROM project WHERE id = ?").get(id) as { settings_json: string } | undefined;
-    return { exclude: [], depth: "thorough", ...(r ? JSON.parse(r.settings_json) : {}) };
+    return { exclude: [], depth: "concise", ...(r ? JSON.parse(r.settings_json) : {}) }; // concise unless chosen: it uses far fewer tokens
   }
 
   updateProjectSettings(id: string, patch: Partial<ProjectSettings>): ProjectSettings {

@@ -539,6 +539,9 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     }
     res.writeHead(200, {
       "content-type": MIME[path.extname(file)] ?? "application/octet-stream",
+      // The page names this build's scripts, so it is never reused from cache after an update;
+      // the scripts' own names change with every build, so they can be cached.
+      "cache-control": path.basename(file) === "index.html" ? "no-cache" : "public, max-age=31536000, immutable",
       "x-content-type-options": "nosniff",
       "referrer-policy": "no-referrer", // the token in the URL must not leak to other sites
       "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",

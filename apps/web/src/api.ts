@@ -25,6 +25,14 @@ function readToken(): string | null {
 const token = readToken();
 export const hasToken = () => !!token;
 
+// Each run of Dena prints a link with a new key. Pasting it into a tab that already shows Dena
+// changes only the part after "#", which browsers do not reload for: pick the new key up here.
+window.addEventListener("hashchange", () => {
+  if (/[#&]t=/.test(location.hash)) location.reload();
+});
+
+const STALE_KEY = "This tab has the key from an earlier run of Dena. Open the newest link that `dena serve` printed in your terminal.";
+
 export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const res = await fetch(`/api/${path}`, {
     method: init.method ?? "GET",
@@ -32,6 +40,7 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new Error(STALE_KEY);
   if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
   return data as T;
 }

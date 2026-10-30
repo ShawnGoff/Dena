@@ -30,7 +30,17 @@ export function renderStep(x: Explanation, opts: { heading?: string; eventLink?:
     "",
     AI_NOTICE,
     "",
-    s.summary,
+    ...(s.instructions.length
+      ? [
+          s.goal ? `**What you'll build:** ${s.goal}` : s.summary,
+          section("Before you start", s.prerequisites),
+          `\n### Steps\n\n${s.instructions.map((c, i) => `${claimLine(c, flagged).replace(/^- /, `${i + 1}. `)}${c.code ? `\n\n   \`\`\`\n${c.code.split("\n").map((l) => `   ${l}`).join("\n")}\n   \`\`\`\n` : ""}`).join("\n")}\n`,
+          section("Check it works", s.check),
+          section("If it goes wrong", s.pitfalls),
+          "\n## How the AI did it\n",
+          s.summary,
+        ]
+      : [s.summary]),
     section("What happened", s.whatHappened),
     section("Why it mattered", s.whyItMattered),
     section("How it works", s.howItWorks),
@@ -40,7 +50,7 @@ export function renderStep(x: Explanation, opts: { heading?: string; eventLink?:
   ];
   if (!s.verification.length && s.generatedBy !== "facts") out.push("\n### Verification\n\n- No test runs were captured for this work.\n");
   if (s.generatedBy === "facts") out.push("\n<sub>No model was used for this step: it changed nothing in the project, so Dena summarised the captured messages directly.</sub>\n");
-  if (s.concepts.length) out.push(`\n### Concepts to understand\n\n${s.concepts.map((c) => `- **${c.term}** — ${c.explanation}`).join("\n")}\n`);
+  if (s.concepts.length) out.push(`\n### What you can learn here\n\n${s.concepts.map((c) => `- **${c.term}** — ${c.explanation}`).join("\n")}\n`);
   const uncertain = s.uncertainty.filter((u) => !isStandingLimitationText(u)); // standing limitations appear once, in About this guide
   if (uncertain.length) out.push(`\n### Uncertainty\n\n${uncertain.map((u) => `- ${u}`).join("\n")}\n`);
   if (x.validation.autoFixes?.length)

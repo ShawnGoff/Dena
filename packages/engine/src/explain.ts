@@ -80,6 +80,11 @@ export function cacheExplanation(store: Store, projectId: string, x: Explanation
 }
 
 function assemble(model: ModelStep, packet: Packet): Step {
+  // Instructions always carry a "code" field in the model's answer; "" means none.
+  for (const c of model.instructions) {
+    if (!c.code?.trim()) delete c.code;
+    c.text = c.text.replace(/^\s*(?:step\s*)?\d+[.):]\s+/i, ""); // the page numbers them
+  }
   return { ...model, whatChanged: whatChangedFromFacts(packet), verification: verificationFromFacts(packet), generatedBy: "model" };
 }
 

@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, lastHeartbeat, liveRecorder, Recorder, type RecorderOptions } from "@dena/adapters";
-import { howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
+import { tutorialPlan, writeTutorial, episodeChapters, howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
   estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
@@ -185,7 +185,13 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         eps = loadEpisodes(store, p.id);
       }
       const explained = new Set((store.db.prepare("SELECT DISTINCT unit_id FROM explanation WHERE project_id = ?").all(p.id) as { unit_id: string }[]).map((r) => r.unit_id));
-      return eps.map((e) => ({ ...e, explained: explained.has(e.id) }));
+      const chapters = episodeChapters(store, p.id, eps);
+      return eps.map((e) => {
+        const step = explained.has(e.id) ? activeRevision(store, p.id, "step", e.id)?.content : null;
+        const ch = chapters.get(e.id);
+        return { ...e, explained: explained.has(e.id), stepTitle: step?.title ?? null, instructions: !!step?.instructions?.length,
+          chapter: ch ? { key: ch.key, areas: ch.areas.slice(0, 3), startedAt: ch.startedAt } : null };
+      });
     }
 
     if (sub[0] === "episodes" && sub[2] === "events" && method === "GET") return compactAll(store, p.id, episodeEvents(store, p.id, sub[1]!));
@@ -347,6 +353,29 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     if (sub[0] === "export" && method === "GET") {
       const r = exportGuideMarkdown(store, p.id);
       return { filename: `${p.name.replace(/[^\w.-]+/g, "-")}-guide.md`, markdown: r.markdown, counts: r.counts };
+    }
+
+    if (sub[0] === "tutorial") {
+      const model = (method === "GET" ? url.searchParams.get("model") : body?.model) || undefined;
+      if (model !== undefined && (typeof model !== "string" || !MODEL_NAME.test(model))) throw new HttpError(400, "Invalid model name");
+      if (sub[1] === "plan" && method === "GET") return { ...tutorialPlan(store, p.id, model), model: model ?? store.projectSettings(p.id).model ?? null };
+      if (sub[1] === "write" && method === "POST") {
+        const flight = `${p.id}:wiki:tutorial`; // the page's Stop button ends it
+        if (inFlight.has(flight)) throw new HttpError(409, "The tutorial is already being written");
+        const controller = new AbortController();
+        inFlight.set(flight, controller);
+        try {
+          const r = await writeTutorial(store, p.id, getProvider(p.id), { explainRest: body?.explainRest === true, model, signal: controller.signal, log: (m) => log(`[${p.name}] tutorial: ${m}`) });
+          return { explainedNow: r.explainedNow, ok: r.page.validation.ok, model: r.page.model };
+        } catch (e) {
+          if (stopped(e)) throw new HttpError(409, (e as Error).message);
+          const msg = (e as Error).message;
+          log(`[${p.name}] tutorial failed: ${msg}`);
+          throw new HttpError(502, /^(Claude Code|Claude is|Your Anthropic|No valid API key|There is no captured)/.test(msg) ? msg : "The model call failed. Check Claude Code's sign-in, then try again.");
+        } finally {
+          inFlight.delete(flight);
+        }
+      }
     }
 
     if (sub[0] === "how-built" && method === "GET") {

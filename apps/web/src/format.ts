@@ -52,12 +52,13 @@ export const STRENGTH_HELP: Record<string, string> = {
 
 /** 4300 → "4.3k", 14200 → "14k". */
 export function tokens(n: number): string {
-  return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1_000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1_000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
-/** "about 7–21k tokens" */
+/** "about 7–21k tokens", "about 1.2–2.5M tokens" */
 export function tokenRange(low: number, high: number): string {
-  return `about ${tokens(low).replace(/k$/, "")}–${tokens(high)} tokens`;
+  const lo = tokens(low), hi = tokens(high);
+  return `about ${lo.slice(-1) === hi.slice(-1) && /[kM]$/.test(lo) ? lo.slice(0, -1) : lo}–${hi} tokens`;
 }
 
 export interface TokenUse { prompt: number; output: number; cacheRead: number }

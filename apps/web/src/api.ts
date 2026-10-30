@@ -86,6 +86,10 @@ export interface Episode {
   startedAt: string;
   endedAt: string;
   explained: boolean;
+  /** The explained step's title (a goal, for steps written as instructions). */
+  stepTitle?: string | null;
+  instructions?: boolean;
+  chapter?: { key: string; areas: string[]; startedAt: string } | null;
   stats: { prompts: number; fileChanges: number; commits: number; tests: number; testFailures: number; notes: number; commands: number };
 }
 export interface Gap {
@@ -132,10 +136,18 @@ export interface Claim {
   evidence: string[];
   edited?: boolean;
   flagged?: "incorrect";
+  /** For an instruction: the command or code to use. */
+  code?: string;
 }
 export interface Step {
   title: string;
   summary: string;
+  /** Instructional sections; steps written before they existed have none. */
+  goal?: string;
+  prerequisites?: Claim[];
+  instructions?: Claim[];
+  check?: Claim[];
+  pitfalls?: Claim[];
   whatHappened: Claim[];
   whyItMattered: Claim[];
   howItWorks: Claim[];

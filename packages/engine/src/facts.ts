@@ -60,6 +60,7 @@ export function factsOnlyStep(packet: Packet, title: string): Step {
   return {
     title,
     summary: "A conversation with no changes to the project. Dena summarised it from the captured messages without using a model.",
+    goal: "", prerequisites: [], instructions: [], check: [], pitfalls: [], // nothing was built, so there is nothing to follow
     whatHappened: happened,
     whyItMattered: [],
     howItWorks: [],

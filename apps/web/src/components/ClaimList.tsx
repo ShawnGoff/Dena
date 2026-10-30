@@ -13,8 +13,10 @@ export const KIND: Record<ClaimKind, { label: string; tone: string; help: string
  * A list of labeled statements. When editable, each statement can be rewritten, marked
  * incorrect (it stays visible, struck through, and the note feeds the next rewrite), or removed.
  */
-export function ClaimList({ claims, refs, flaggedByChecks, editable, onEdit, onMarkIncorrect }: {
+export function ClaimList({ claims, refs, flaggedByChecks, editable, onEdit, onMarkIncorrect, numbered }: {
   claims: Claim[];
+  /** Instructions: numbered, with their command or code shown under each. */
+  numbered?: boolean;
   refs: (c: Claim) => ReactNode;
   flaggedByChecks?: Set<string>;
   editable?: boolean;
@@ -26,9 +28,10 @@ export function ClaimList({ claims, refs, flaggedByChecks, editable, onEdit, onM
   const [flagging, setFlagging] = useState<number | null>(null);
 
   return (
-    <ul className="claims">
+    <ul className={`claims ${numbered ? "numbered" : ""}`}>
       {claims.map((c, i) => (
         <li key={i} className={`claim ${c.kind} ${c.flagged ? "flagged" : ""}`}>
+          {numbered && <span className="step-num" aria-label={`Step ${i + 1}`}>{i + 1}</span>}
           <span className={`badge ${KIND[c.kind]?.tone ?? "muted"}`} title={KIND[c.kind]?.help}>{KIND[c.kind]?.label ?? c.kind}</span>
           <span className="claim-text">
             {editing === i ? (
@@ -44,6 +47,7 @@ export function ClaimList({ claims, refs, flaggedByChecks, editable, onEdit, onM
               <>
                 <span className="claim-body">{c.text}</span>
                 {c.evidence.length > 0 && <span className="refs">{refs(c)}</span>}
+                {c.code && <CodeBlock code={c.code} />}
                 {c.edited && <span className="badge you" style={{ marginLeft: 6 }} title="You rewrote this statement; your words are not checked against evidence">edited by you</span>}
                 {c.flagged === "incorrect" && <span className="badge bad" style={{ marginLeft: 6 }}>you marked this incorrect</span>}
                 {flaggedByChecks?.has(c.text.slice(0, 80)) && <span className="badge bad" style={{ marginLeft: 6 }} title="Failed an automatic check; see Checks">check failed</span>}
@@ -63,6 +67,18 @@ export function ClaimList({ claims, refs, flaggedByChecks, editable, onEdit, onM
         </li>
       ))}
     </ul>
+  );
+}
+
+function CodeBlock({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <span className="instr-code">
+      <pre>{code}</pre>
+      <button className="linkish small" onClick={() => navigator.clipboard?.writeText(code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => {})}>
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </span>
   );
 }
 

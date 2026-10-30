@@ -142,3 +142,48 @@ export function episodeEvents(store: Store, projectId: string, unitId: string): 
   );
   return store.timeline(projectId).filter((e) => ids.has(e.id));
 }
+
+export interface Chapter {
+  key: string;
+  /** The parts of the project the chapter's episodes changed, busiest first (folders, two levels deep). */
+  areas: string[];
+  startedAt: string;
+}
+
+/**
+ * Chapters for the walkthrough: one per Claude Code session (a sitting of work), so the list reads
+ * as a table of contents rather than a run of prompts. Episodes outside any session join the one
+ * before them. Each chapter names the folders its work touched.
+ */
+export function episodeChapters(store: Store, projectId: string, eps: Omit<Episode, "eventIds">[]): Map<string, Chapter> {
+  const root = store.getProject(projectId)!.rootPath;
+  const area = (file: string) => {
+    const rel = file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file;
+    if (rel.startsWith("/") || rel.startsWith("..")) return null;
+    const parts = rel.split("/");
+    return parts.length >= 3 ? parts.slice(0, 2).join("/") : parts.length === 2 ? parts[0]! : "(project root)";
+  };
+  const out = new Map<string, Chapter>();
+  let current: Chapter | null = null;
+  let currentSession: string | null = null;
+  const counts = new Map<Chapter, Map<string, number>>();
+  for (const ep of eps) {
+    const events = episodeEvents(store, projectId, ep.id);
+    const session = events.find((e) => e.sessionId && e.source.startsWith("claude_code"))?.sessionId ?? null;
+    if (!current || (session && session !== currentSession)) {
+      current = { key: session ?? ep.id, areas: [], startedAt: ep.startedAt };
+      currentSession = session;
+      counts.set(current, new Map());
+    }
+    const c = counts.get(current)!;
+    for (const e of events) {
+      const p = e.payload as Record<string, any>;
+      const f = e.eventType.startsWith("file_") ? p.file : e.eventType === "tool_invoked" && ["Edit", "MultiEdit", "Write"].includes(p.tool) ? p.input?.file_path : null;
+      const a = f ? area(String(f)) : null;
+      if (a) c.set(a, (c.get(a) ?? 0) + 1);
+    }
+    out.set(ep.id, current);
+  }
+  for (const [ch, c] of counts) ch.areas = [...c.entries()].sort((a, b) => b[1] - a[1]).map(([a]) => a);
+  return out;
+}

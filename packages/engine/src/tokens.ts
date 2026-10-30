@@ -116,9 +116,10 @@ export function estimateTokens(store: Store, model: string, chars: number, docs:
 
 /** "about 12–25k tokens" */
 export function formatTokenRange(e: Pick<TokenEstimate, "low" | "high">): string {
-  return `about ${formatTokens(e.low).replace(/k$/, "")}–${formatTokens(e.high)} tokens`;
+  const lo = formatTokens(e.low), hi = formatTokens(e.high);
+  return `about ${lo.slice(-1) === hi.slice(-1) && /[kM]$/.test(lo) ? lo.slice(0, -1) : lo}–${hi} tokens`;
 }
 
 export function formatTokens(n: number): string {
-  return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1_000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1_000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }

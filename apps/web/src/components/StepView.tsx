@@ -4,7 +4,7 @@ import { isStandingLimitationText, tokenLine } from "../format";
 
 export { KIND };
 
-type ClaimSection = "whatHappened" | "whyItMattered" | "howItWorks" | "whatChanged" | "decisions" | "verification";
+type ClaimSection = "prerequisites" | "instructions" | "check" | "pitfalls" | "whatHappened" | "whyItMattered" | "howItWorks" | "whatChanged" | "decisions" | "verification";
 
 /**
  * Renders one explained step from its structured form. Every claim shows its kind, and every
@@ -29,36 +29,32 @@ export function StepView({ x, onRef, editable, onChange, onMarkIncorrect }: {
       </button>
     );
   });
+  const list = (section: ClaimSection): Claim[] => s[section] ?? [];
   const change = (section: ClaimSection, i: number, next: Claim | null) => {
-    const list = [...s[section]];
+    const list = [...(s[section] ?? [])];
     const before = list[i]!;
     if (next) list[i] = next;
     else list.splice(i, 1);
     onChange?.({ ...s, [section]: list }, next ? (next.text !== before.text ? "Edited a statement" : "Changed a statement's mark") : `Removed: “${before.text.slice(0, 80)}”`);
   };
-  const claims = (title: string, section: ClaimSection, note?: string) =>
-    s[section].length > 0 && (
+  const claims = (title: string, section: ClaimSection, note?: string, numbered?: boolean) =>
+    list(section).length > 0 && (
       <section className="step-section">
         <h3>{title}{note && <span className="faint"> · {note}</span>}</h3>
-        <ClaimList claims={s[section]} refs={refs} flaggedByChecks={flagged} editable={editable}
+        <ClaimList claims={list(section)} refs={refs} flaggedByChecks={flagged} editable={editable} numbered={numbered}
           onEdit={(i, next) => change(section, i, next)}
           onMarkIncorrect={(i, n) => {
-            const c = s[section][i]!;
+            const c = list(section)[i]!;
             onMarkIncorrect?.(c, n);
             change(section, i, { ...c, flagged: "incorrect" });
           }} />
       </section>
     );
 
-  return (
-    <article className="step">
-      <h2 className="step-title">{s.title}</h2>
-      <div className="ai-notice">
-        <b>Written by AI from captured evidence. It can be wrong.</b> Each statement is labeled{" "}
-        {(Object.keys(KIND) as ClaimKind[]).map((k) => <span key={k} className={`badge ${KIND[k].tone}`} title={KIND[k].help} style={{ marginRight: 4 }}>{KIND[k].label}</span>)}
-        and the <span className="ref static">E3</span> buttons open the events behind it.{editable && " Hover a statement to edit it, mark it incorrect, or remove it."}
-      </div>
-      <p className="step-summary">{s.summary}</p>
+  // Steps written as instructions lead with them; the story of how it was done sits underneath.
+  const guide = list("instructions").length > 0;
+  const story = (
+    <>
       {claims("What happened", "whatHappened")}
       {claims("Why it mattered", "whyItMattered")}
       {claims("How it works", "howItWorks")}
@@ -68,6 +64,33 @@ export function StepView({ x, onRef, editable, onChange, onMarkIncorrect }: {
       {s.generatedBy !== "facts" && s.verification.length === 0 && (
         <section className="step-section"><h3>Verification</h3><p className="muted">No test runs were captured for this work.</p></section>
       )}
+    </>
+  );
+
+  return (
+    <article className="step">
+      <h2 className="step-title">{s.title}</h2>
+      <div className="ai-notice">
+        <b>Written by AI from captured evidence. It can be wrong.</b> Each statement is labeled{" "}
+        {(Object.keys(KIND) as ClaimKind[]).map((k) => <span key={k} className={`badge ${KIND[k].tone}`} title={KIND[k].help} style={{ marginRight: 4 }}>{KIND[k].label}</span>)}
+        and the <span className="ref static">E3</span> buttons open the events behind it.{editable && " Hover a statement to edit it, mark it incorrect, or remove it."}
+      </div>
+      {guide ? (
+        <>
+          {s.goal && <p className="step-summary"><b>What you'll build:</b> {s.goal}</p>}
+          {claims("Before you start", "prerequisites")}
+          {claims("Steps", "instructions", undefined, true)}
+          {claims("Check it works", "check")}
+          {claims("If it goes wrong", "pitfalls", "from what went wrong in the recording")}
+        </>
+      ) : <p className="step-summary">{s.summary}</p>}
+      {guide ? (
+        <details className="story">
+          <summary>How the AI did it <span className="faint small">· the story, what changed, and the test runs</span></summary>
+          <p className="step-summary">{s.summary}</p>
+          {story}
+        </details>
+      ) : story}
       {s.concepts.length > 0 && (
         <section className="step-section">
           <h3>What you can learn here</h3>

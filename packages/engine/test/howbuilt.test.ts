@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { correlate, Store, type NewEvent } from "@dena/core";
-import { exportGuideMarkdown, howBuiltLine, howBuiltPage, howBuiltStep, rebuildEpisodes, recordGenerated } from "../src/index.ts";
+import { exportGuideMarkdown, howBuiltLine, howBuiltPage, howBuiltStep, loadEpisodes, rebuildEpisodes, recordGenerated } from "../src/index.ts";
 
 let home: string;
 let store: Store;
@@ -68,5 +68,18 @@ describe("how the AI built this", () => {
     expect(md).toContain("### What you can learn here");
     expect(md).toContain("- **Dependency-free modules** — Code with no outside packages is easier to move.");
     expect(md).toContain("### How the AI built this");
+  });
+});
+
+describe("episodes stay current", () => {
+  it("are rebuilt when new events arrive, without anyone asking", () => {
+    const before = loadEpisodes(store, pid).length;
+    store.ingest(pid, { sessions: [], artifacts: [], gaps: [], links: [], events: [
+      ev("u9", "prompt_submitted", 3_600, { text: "Now add a JSON exporter" }, { actor: "user", summary: "Now add a JSON exporter" }),
+      ev("tool:w9", "tool_invoked", 3_605, { tool: "Write", input: { file_path: "/p/src/json.ts" } }),
+    ] });
+    const after = loadEpisodes(store, pid);
+    expect(after.length).toBe(before + 1);
+    expect(after[after.length - 1]!.title).toBe("Now add a JSON exporter");
   });
 });

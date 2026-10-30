@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { correlate, displaySummary, Store, type StoredEvent } from "@dena/core";
 import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
-import { codeOverview, codePage, explainFile, formatTokenRange, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, formatTokens, exportGuideMarkdown, buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
+import { exportGuideHtml, codeOverview, codePage, explainFile, formatTokenRange, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, formatTokens, exportGuideMarkdown, buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
 import { startServer } from "@dena/server";
 
@@ -40,14 +40,17 @@ const USAGE = `dena <command>
                                  explain many episodes in as few calls as possible; shows an estimate first
   memory <project> [--rebuild]   project memory: components, problems and fixes, decisions, concepts, unknowns
   wiki <project> [section] [--model M] [--force] [--out FILE]
-                                 list the wiki pages, or write one (overview, architecture, component:<folder>)
+                                 list the wiki pages, or write one (overview, product, tutorial, architecture,
+                                 component:<folder>)
   code <project> [file] [--explain] [--force] [--model M] [--out FILE]
                                  list source files and how much is explained, or show one file's page;
                                  --explain explains its new and changed functions (unchanged ones are kept)
   log <project> [--session ID|last] [--all] [--out FILE]
                                  what the AI did, session by session, in plain language (no model used);
                                  --all includes its replies and bookkeeping
-  export <project> [--out FILE]  the whole guide as one Markdown file (current versions, with your edits)
+  export <project> [--html] [--out FILE]
+                                 the whole guide as one Markdown file, or with --html as one HTML page to share
+                                 (current versions, with your edits)
   serve [--port N]               open Dena's interface in your browser (local only; the printed link carries a one-time key)
   config <project> [key value]   show or set: model (e.g. haiku, sonnet; "default" = your Claude Code default),
                                  depth (concise|thorough), max-usd (per batch run; "none" to clear),
@@ -379,9 +382,10 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
       }
       case "export": {
         const p = project(store, args[0]);
-        const r = exportGuideMarkdown(store, p.id);
-        const out = flag("out") ?? `${p.name}-guide.md`;
-        fs.writeFileSync(out, r.markdown);
+        const html = args.includes("--html");
+        const r = html ? exportGuideHtml(store, p.id) : exportGuideMarkdown(store, p.id);
+        const out = flag("out") ?? `${p.name}-guide.${html ? "html" : "md"}`;
+        fs.writeFileSync(out, "html" in r ? r.html : r.markdown);
         console.log(`Wrote ${out}: ${r.counts.wikiPages} wiki pages, ${r.counts.steps} of ${r.counts.stepsTotal} episodes explained, plus problems, decisions, glossary and unknowns.`);
         break;
       }

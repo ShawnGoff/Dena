@@ -18,3 +18,4 @@ export * from "./code.ts";
 export * from "./targeted.ts";
 export * from "./howbuilt.ts";
 export * from "./tutorial.ts";
+export * from "./html.ts";

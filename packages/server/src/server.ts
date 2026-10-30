@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, lastHeartbeat, liveRecorder, Recorder, type RecorderOptions } from "@dena/adapters";
-import { tutorialPlan, writeTutorial, episodeChapters, howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
+import { exportGuideHtml, tutorialPlan, writeTutorial, episodeChapters, howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
   estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
@@ -348,6 +348,11 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       }
       if (sub[1] === "cancel") return { cancelled: cancelQueued(store, p.id) };
       throw new HttpError(404, "Not found");
+    }
+
+    if (sub[0] === "export" && method === "GET" && url.searchParams.get("format") === "html") {
+      const r = exportGuideHtml(store, p.id);
+      return { filename: `${p.name.replace(/[^\w.-]+/g, "-")}-guide.html`, html: r.html, counts: r.counts };
     }
 
     if (sub[0] === "export" && method === "GET") {

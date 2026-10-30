@@ -58,7 +58,7 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…`
 export function wikiComponents(store: Store, projectId: string, limit = 8): MemoryEntity[] {
   ensureMemory(store, projectId);
   return loadMemory(store, projectId, "component")
-    .filter((c) => c.title !== "(project root)")
+    .filter((c) => c.title !== "(project root)" && ((c.data as any).fileCount >= 2 || (c.data as any).commits >= 2)) // one file is not a component
     .sort((a, b) => b.sortKey - a.sortKey)
     .slice(0, limit);
 }
@@ -293,7 +293,7 @@ export function productCodeSources(store: Store, projectId: string): Omit<WikiSo
     const t = read(f.path);
     const m = t && /\b(?:USAGE|HELP|usage|help(?:Text)?)\s*=\s*`([\s\S]{80,8000}?)`/.exec(t);
     if (m) {
-      code(f.path, `Command-line help text: ${clip(m[1]!, 3000)}`);
+      code(f.path, `Command-line help text: ${clip(m[1]!, 6000)}`); // all of it: a cut list makes the guide say settings are unknown
       break;
     }
   }

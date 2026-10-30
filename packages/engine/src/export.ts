@@ -3,7 +3,7 @@ import { loadEpisodes } from "./episodes.ts";
 import { ensureMemory, loadMemory } from "./memory.ts";
 import { ensureDocRevision } from "./docs.ts";
 import type { Claim } from "./schema.ts";
-import { sectionKeys } from "./wiki.ts";
+import { sectionKeys, sourceLabel, type WikiSource } from "./wiki.ts";
 import { isStandingLimitationText, standingLimitations } from "./packet.ts";
 
 /**
@@ -46,7 +46,7 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
   const pages = sectionKeys(store, projectId).map((s) => ({ ...s, rev: ensureDocRevision(store, projectId, "wiki", s.key) })).filter((p) => p.rev);
   for (const p of pages) {
     const sec = p.rev!.content as { title: string; summary: string; sections: { heading: string; claims: Claim[] }[]; uncertainty: string[] };
-    const sources = new Map(((p.rev!.meta.sources ?? []) as { ref: string; type: string; grade: string; text: string; eventIds: number[] }[]).map((s) => [s.ref, s]));
+    const sources = new Map(((p.rev!.meta.sources ?? []) as WikiSource[]).map((s) => [s.ref, s]));
     const prefix = anchor(p.key);
     h2(p.key.startsWith("component:") ? `Component: ${p.title}` : sec.title || p.title);
     out.push(sec.summary);
@@ -58,7 +58,7 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
       out.push("", "<details><summary>Sources</summary>", "");
       for (const r of cited) {
         const s = sources.get(r);
-        if (s) out.push(`- <a id="${prefix}-${r.toLowerCase()}"></a>**${r}** ${s.type === "fact" ? "fact" : `${s.grade.replace("_", "-")} claim`}: ${s.text} — events ${s.eventIds.map((i) => `#${i}`).join(", ")}`);
+        if (s) out.push(`- <a id="${prefix}-${r.toLowerCase()}"></a>**${r}** ${sourceLabel(s)}: ${s.text} — ${s.files?.length ? `file ${s.files.join(", ")}` : `events ${s.eventIds.map((i) => `#${i}`).join(", ")}`}`);
       }
       out.push("", "</details>");
     }

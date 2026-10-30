@@ -87,7 +87,7 @@ export function App() {
             </div>
             <Recording project={project} onChange={() => { loadProjects(); setRefresh((n) => n + 1); }} />
             <div className="tabs" role="tablist">
-              {(["overview", "wiki", "code", "activity", "timeline", "guide", "memory", "search"] as View[]).map((v) => (
+              {(["overview", "wiki", "code", "activity", "guide", "memory", "timeline", "search"] as View[]).map((v) => (
                 <button key={v} role="tab" aria-selected={route.v === v} className={`tab ${route.v === v ? "active" : ""}`} onClick={() => go({ v })}>
                   {v[0]!.toUpperCase() + v.slice(1)}
                 </button>

@@ -10,7 +10,7 @@ import { isStandingLimitationText, tokenLine, tokenRange, when } from "../format
 import { AboutGuide } from "../components/AboutGuide";
 
 interface PageInfo { key: string; title: string; sources: number; chars: number; generated: boolean; stale: boolean; model: string | null }
-interface Source { ref: string; type: "fact" | "claim"; grade: keyof typeof KIND; text: string; unitId: string | null; eventIds: number[] }
+interface Source { ref: string; type: "fact" | "claim" | "code"; grade: keyof typeof KIND; text: string; unitId: string | null; eventIds: number[]; files?: string[] }
 interface Claim { text: string; kind: keyof typeof KIND; evidence: string[]; edited?: boolean; flagged?: "incorrect" }
 type SectionContent = Stored["section"];
 interface Stored {
@@ -26,15 +26,18 @@ interface Stored {
 interface SectionResponse { section: Stored | null; brief: { sources: number; chars: number; tokens: { promptTokens: number; outputTokens: number; low: number; high: number; calibrated: boolean; basis: string } };
   settings: { model: string | null } }
 
-const LABEL = (key: string) => (key === "overview" ? "Overview" : key === "architecture" ? "Architecture" : key.slice("component:".length));
+const LABEL = (key: string) => (key === "overview" ? "Overview" : key === "product" ? "Product guide" : key === "architecture" ? "Architecture" : key.slice("component:".length));
+/** Source files the Code tab explains (documents and package files are shown as plain paths). */
+const isCode = (f: string) => /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|go|rs|rb|java|kt|swift|c|h|cpp|hpp|cs|php|css|scss|html|vue|svelte|sql|sh)$/i.test(f);
+const sourceBadge = (x: Source) => (x.type === "fact" ? "Fact" : x.type === "code" ? (x.grade === "observed" ? "From the project's files" : "Dena's reading of the code") : `Claim · ${KIND[x.grade].label}`);
 
 /**
  * The guide's written pages. Each statement cites sources (S1…); each source is a fact Dena
  * counted from events or a claim from an episode's explanation, and lists the events behind it.
  */
-export function Wiki({ projectId, page, onPage, onEvent, onEpisode, onMemory, onWalkthrough }: {
+export function Wiki({ projectId, page, onPage, onEvent, onEpisode, onFile, onMemory, onWalkthrough }: {
   projectId: string; page: string | null; onPage: (key: string) => void; onEvent: (id: number) => void; onEpisode: (id: string) => void;
-  onMemory: () => void; onWalkthrough: () => void;
+  onFile: (path: string) => void; onMemory: () => void; onWalkthrough: () => void;
 }) {
   const [pages, setPages] = useState<PageInfo[] | null>(null);
   const loadPages = useCallback(() => api<PageInfo[]>(`projects/${projectId}/wiki`).then(setPages, () => setPages([])), [projectId]);
@@ -66,13 +69,15 @@ export function Wiki({ projectId, page, onPage, onEvent, onEpisode, onMemory, on
         <ExportButton projectId={projectId} />
       </nav>
       <div className="guide-main">
-        <WikiPage key={current} projectId={projectId} pageKey={current} onEvent={onEvent} onEpisode={onEpisode} onWritten={loadPages} />
+        <WikiPage key={current} projectId={projectId} pageKey={current} onEvent={onEvent} onEpisode={onEpisode} onFile={onFile} onWritten={loadPages} />
       </div>
     </div>
   );
 }
 
-function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { projectId: string; pageKey: string; onEvent: (id: number) => void; onEpisode: (id: string) => void; onWritten: () => void }) {
+function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }: {
+  projectId: string; pageKey: string; onEvent: (id: number) => void; onEpisode: (id: string) => void; onFile: (path: string) => void; onWritten: () => void;
+}) {
   const [r, setR] = useState<SectionResponse | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -163,7 +168,7 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
           <h2 className="step-title">{s.section.title}</h2>
           <div className="ai-notice">
             <b>Written by AI from captured evidence. It can be wrong.</b> Each statement is labeled and cites sources like <span className="ref static">S3</span>.
-            A source is a <b>fact</b> Dena counted from captured events, or a <b>claim</b> from an episode's explanation; each lists the events behind it.
+            A source is a <b>fact</b> Dena counted from captured events, a <b>claim</b> from an episode's explanation, or text from the project's own <b>files</b>; each lists the events or file behind it.
           </div>
           <p className="step-summary">{s.section.summary}</p>
           {s.section.sections.map((sec) => (
@@ -197,15 +202,18 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onWritten }: { proje
               <div key={x.ref} id={`src-${x.ref}`} className={`source ${focus === x.ref ? "focused" : ""}`}>
                 <span className="ref static">{x.ref}</span>
                 <span>
-                  <Badge tone={x.type === "fact" ? "ok" : KIND[x.grade].tone}>{x.type === "fact" ? "Fact" : `Claim · ${KIND[x.grade].label}`}</Badge> {x.text}
+                  <Badge tone={x.type === "fact" || (x.type === "code" && x.grade === "observed") ? "ok" : KIND[x.grade].tone}>{sourceBadge(x)}</Badge> <SourceText text={x.text} />
                   <span className="refs">{x.eventIds.slice(0, 6).map((id, i) => <button key={id} className="ref" onClick={() => onEvent(id)} title="Open the evidence">ev {i + 1}</button>)}</span>
+                  {x.files?.map((f) => isCode(f)
+                    ? <button key={f} className="chip" style={{ marginLeft: 6 }} onClick={() => onFile(f)} title="Open this file's explainer">{f}</button>
+                    : <code key={f} className="small" style={{ marginLeft: 6 }}>{f}</code>)}
                   {x.unitId && <button className="chip" style={{ marginLeft: 6 }} onClick={() => onEpisode(x.unitId!)}>episode</button>}
                 </span>
               </div>
             ))}
           </section>
           <footer className="step-foot">
-            Written by {s.model ?? "unknown model"} · {when(s.createdAt)}{tokenLine(rev?.meta.tokens) ? ` · ${tokenLine(rev?.meta.tokens)}` : ""}{s.costUsd ? ` (API-equivalent $${s.costUsd.toFixed(3)})` : ""}{s.attempts > 1 ? " · needed 1 repair" : ""} · {Math.round(s.validation.groundedShare * 100)}% of project statements reach captured events
+            Written by {s.model ?? "unknown model"} · {when(s.createdAt)}{tokenLine(rev?.meta.tokens) ? ` · ${tokenLine(rev?.meta.tokens)}` : ""}{s.costUsd ? ` (API-equivalent $${s.costUsd.toFixed(3)})` : ""}{s.attempts > 1 ? " · needed 1 repair" : ""} · {Math.round(s.validation.groundedShare * 100)}% of project statements reach captured events or the project's files
           </footer>
           <div className="explain-more">
             <span className="muted">Rewrite this page. Stronger models are more careful and use more of your plan.</span>
@@ -246,4 +254,11 @@ function ExportButton({ projectId }: { projectId: string }) {
       {msg && <div className="faint small" style={{ marginTop: 4 }}>{msg}</div>}
     </div>
   );
+}
+
+/** Long sources (a whole README section) show a preview first. */
+function SourceText({ text }: { text: string }) {
+  const [all, setAll] = useState(false);
+  if (text.length <= 320) return <>{text}</>;
+  return <>{all ? text : `${text.slice(0, 300).trimEnd()}…`} <button className="linkish small" onClick={() => setAll(!all)}>{all ? "show less" : "show all"}</button></>;
 }

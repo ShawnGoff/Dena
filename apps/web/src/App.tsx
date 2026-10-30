@@ -100,7 +100,7 @@ export function App() {
               {route.v === "timeline" && <Timeline projectId={project.id} refresh={refresh} openEpisode={route.ep} selectedEvent={route.ev} onEvent={onEvent} />}
               {route.v === "guide" && <Guide projectId={project.id} openEpisode={route.ep} onEpisode={(ep) => go({ ep, ev: null })} onEvent={onEvent} />}
               {route.v === "wiki" && <Wiki projectId={project.id} page={route.page} onPage={(page) => go({ page, ev: null })} onEvent={onEvent}
-                onEpisode={(ep) => go({ v: "guide", ep, ev: null })} onMemory={() => go({ v: "memory", ev: null })} onWalkthrough={() => go({ v: "guide", ev: null })} />}
+                onEpisode={(ep) => go({ v: "guide", ep, ev: null })} onFile={(file) => go({ v: "code", file, ev: null })} onMemory={() => go({ v: "memory", ev: null })} onWalkthrough={() => go({ v: "guide", ev: null })} />}
               {route.v === "code" && <Code projectId={project.id} file={route.file} onFile={(file) => go({ file, ev: null })} onEvent={onEvent} />}
               {route.v === "activity" && <Activity projectId={project.id} onEvent={onEvent} />}
               {route.v === "memory" && <Memory projectId={project.id} onEvent={onEvent} onEpisode={(ep) => go({ v: "guide", ep, ev: null })} />}

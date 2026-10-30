@@ -41,8 +41,8 @@ export function ModelSettings({ projectId }: { projectId: string }) {
       <label>
         <span className="faint">Sign-in</span>
         <select value={s.auth} onChange={(e) => save({ auth: e.target.value as Settings["auth"] })}>
-          <option value="account">Claude account (subscription)</option>
-          <option value="api-key">API key (billed credits)</option>
+          <option value="account">Claude account (plan)</option>
+          <option value="api-key">API key (credits)</option>
         </select>
       </label>
       {auth && (

@@ -249,31 +249,36 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
   );
 }
 
-/** Downloads the whole guide as Markdown: current versions of every page and step, with your edits. */
+/** Downloads the whole guide: Markdown to keep or edit, or one HTML page to share. Both are current versions with your edits. */
 function ExportButton({ projectId }: { projectId: string }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"md" | "html" | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const run = async () => {
-    setBusy(true);
+  const run = async (format: "md" | "html") => {
+    setBusy(format);
     setMsg(null);
     try {
-      const r = await api<{ filename: string; markdown: string; counts: { wikiPages: number; steps: number; stepsTotal: number } }>(`projects/${projectId}/export`);
-      const url = URL.createObjectURL(new Blob([r.markdown], { type: "text/markdown;charset=utf-8" }));
+      const r = await api<{ filename: string; markdown?: string; html?: string; counts: { wikiPages: number; steps: number; stepsTotal: number } }>(
+        `projects/${projectId}/export${format === "html" ? "?format=html" : ""}`);
+      const blob = format === "html" ? new Blob([r.html!], { type: "text/html;charset=utf-8" }) : new Blob([r.markdown!], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = r.filename;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setMsg(`${r.counts.wikiPages} pages, ${r.counts.steps} of ${r.counts.stepsTotal} episodes`);
+      setMsg(`${r.counts.wikiPages} pages, ${r.counts.steps} of ${r.counts.stepsTotal} episodes${format === "html" ? ". It contains your project's history: read it before you share it." : ""}`);
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
   return (
     <div style={{ padding: "2px 8px" }}>
-      <button className="btn" disabled={busy} onClick={run}>{busy ? "Exporting…" : "Export guide (.md)"}</button>
+      <span className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+        <button className="btn" disabled={!!busy} onClick={() => run("html")} title="One page that opens in any browser">{busy === "html" ? "Exporting…" : "Share as a web page (.html)"}</button>
+        <button className="btn" disabled={!!busy} onClick={() => run("md")}>{busy === "md" ? "Exporting…" : "Markdown (.md)"}</button>
+      </span>
       {msg && <div className="faint small" style={{ marginTop: 4 }}>{msg}</div>}
     </div>
   );

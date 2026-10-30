@@ -113,7 +113,8 @@ export function buildEpisodes(events: StoredEvent[]): Episode[] {
 
 /** Rebuilds a project's episodes in place. Explanations keep their own copy of what they cited. */
 export function rebuildEpisodes(store: Store, projectId: string): Episode[] {
-  const episodes = buildEpisodes(store.timeline(projectId));
+  const events = store.timeline(projectId);
+  const episodes = buildEpisodes(events);
   const insUnit = store.db.prepare(
     "INSERT INTO work_unit (id, project_id, position, title, started_at, ended_at, stats_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
@@ -124,11 +125,18 @@ export function rebuildEpisodes(store: Store, projectId: string): Episode[] {
       insUnit.run(ep.id, projectId, ep.position, ep.title, ep.startedAt, ep.endedAt, JSON.stringify(ep.stats));
       for (const id of ep.eventIds) insEv.run(projectId, ep.id, id);
     }
+    store.setCursor(projectId, "episodes", "last_event_id", String(events.reduce((m, e) => Math.max(m, e.id), 0)));
   })();
   return episodes;
 }
 
+/**
+ * The project's episodes, rebuilt first when events arrived since they were last built, so every
+ * reader (the Guide, updates, wiki pages, the command line) sees new work as soon as it is captured.
+ */
 export function loadEpisodes(store: Store, projectId: string): Omit<Episode, "eventIds">[] {
+  const newest = (store.db.prepare("SELECT MAX(id) n FROM event WHERE project_id = ?").get(projectId) as { n: number | null }).n ?? 0;
+  if (newest > Number(store.getCursor(projectId, "episodes", "last_event_id") ?? 0)) rebuildEpisodes(store, projectId);
   return (store.db.prepare("SELECT * FROM work_unit WHERE project_id = ? ORDER BY position").all(projectId) as any[]).map((r) => ({
     id: r.id, position: r.position, title: r.title, startedAt: r.started_at, endedAt: r.ended_at, stats: JSON.parse(r.stats_json),
   }));

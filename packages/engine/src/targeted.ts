@@ -8,7 +8,7 @@ import { activeRevision, adoptProposed, recordProposed, revisions, type DocType,
 import { Claim, ClaimKind, STEP_CLAIM_SECTIONS, Step, referenceGuide, systemPrompt } from "./schema.ts";
 import { estimateTokens, type TokenEstimate } from "./tokens.ts";
 import { autoFixStep, validateStep } from "./validate.ts";
-import { buildBrief, cacheSection, renderBrief, validateSection, WIKI_SYSTEM_PROMPT, WikiSection, type Brief, type SectionKey, type WikiSource } from "./wiki.ts";
+import { WIKI_DEFAULT_EFFORT, buildBrief, cacheSection, renderBrief, validateSection, WIKI_SYSTEM_PROMPT, WikiSection, type Brief, type SectionKey, type WikiSource } from "./wiki.ts";
 import { z } from "zod";
 
 /**
@@ -353,7 +353,7 @@ export async function updateSection(store: Store, projectId: string, key: Sectio
     const system = `${WIKI_SYSTEM_PROMPT}\n${UPDATE_RULES}`;
     chars = user.length + system.length;
     log(`targeted update: ${plan.kept.length} statements kept, ${plan.affected.length} to review, ${send.length} new or changed sources of ${plan.allRefs}`);
-    const res = await provider.generate(system, user, updateJson(null, "^S[0-9]+$", false), { model: model || undefined, signal: opts.signal });
+    const res = await provider.generate(system, user, updateJson(null, "^S[0-9]+$", false), { model: model || undefined, signal: opts.signal, effort: store.projectSettings(projectId).effort ?? WIKI_DEFAULT_EFFORT });
     tokens = res.tokens ?? null;
     cost = res.costUsd ?? 0;
     usedModel = res.model;

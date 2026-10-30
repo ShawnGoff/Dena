@@ -450,11 +450,19 @@ export function storedSection(store: Store, projectId: string, key: SectionKey, 
 }
 
 /** Writes (or returns the cached) page for a section. One repair call if the checks find errors. */
+/**
+ * Reasoning effort for wiki pages unless the project sets one. A page's tokens are mostly what it
+ * writes; measured on a real page, low effort wrote the same length of page with about 60% fewer
+ * tokens, the difference being hidden reasoning.
+ */
+export const WIKI_DEFAULT_EFFORT = "low";
+
 export async function generateSection(store: Store, projectId: string, key: SectionKey, provider: Provider,
   opts: { model?: string; force?: boolean; log?: (m: string) => void; signal?: AbortSignal } = {}): Promise<StoredSection> {
   const log = opts.log ?? (() => {});
   const settings = store.projectSettings(projectId);
   const model = opts.model ?? settings.model ?? "";
+  const effort = settings.effort ?? WIKI_DEFAULT_EFFORT;
   const brief = buildBrief(store, projectId, key);
   if (!opts.force) {
     const hit = store.db
@@ -467,24 +475,24 @@ export async function generateSection(store: Store, projectId: string, key: Sect
   const schema = key === "tutorial" ? WIKI_TUTORIAL_JSON_SCHEMA : WIKI_JSON_SCHEMA;
   const user = `${PAGE_GUIDE[kind]}\n\nPage: ${brief.title}\n\n<sources>\n${renderBrief(brief)}\n</sources>\n\nWrite the page as JSON matching the schema.`;
   log(`sending ${brief.sources.length} sources (${brief.chars} chars) to ${provider.name}${model ? ` [${model}]` : ""}`);
-  let res = await provider.generate(WIKI_SYSTEM_PROMPT, user, schema, { model: model || undefined, signal: opts.signal });
+  let res = await provider.generate(WIKI_SYSTEM_PROMPT, user, schema, { model: model || undefined, signal: opts.signal, effort });
   let cost = res.costUsd ?? 0;
   let tokens: TokenUsage | null = res.tokens ?? null;
   let sentChars = user.length + WIKI_SYSTEM_PROMPT.length;
   let section = dropEmptyCode(WikiSection.parse(res.json));
   let validation = validateSection(section, brief);
-  let attempts = 1;
+  let attempts = res.calls ?? 1; // a format retry inside the provider counts as a call
   if (!validation.ok) {
     const errors = validation.issues.filter((i) => i.severity === "error");
     log(`checks found ${errors.length} problems; one repair call`);
     const repair = `${user}\n\nYour previous answer:\n${JSON.stringify(section)}\n\nFix each problem by correcting the claim, citing the right sources, lowering its kind, or removing it:\n${errors.map((e) => `- [${e.heading}] "${e.claim ?? ""}": ${e.message}`).join("\n")}`;
-    res = await provider.generate(WIKI_SYSTEM_PROMPT, repair, schema, { model: model || undefined, signal: opts.signal });
+    res = await provider.generate(WIKI_SYSTEM_PROMPT, repair, schema, { model: model || undefined, signal: opts.signal, effort });
     cost += res.costUsd ?? 0;
     tokens = tokens && res.tokens ? addTokens(tokens, res.tokens) : null;
     sentChars += repair.length + WIKI_SYSTEM_PROMPT.length;
     section = dropEmptyCode(WikiSection.parse(res.json));
     validation = validateSection(section, brief);
-    attempts = 2;
+    attempts += res.calls ?? 1;
   }
   cacheSection(store, projectId, key, { inputHash: brief.hash, requestedModel: model, model: res.model, attempts, section, validation, sources: brief.sources, costUsd: cost, inputChars: sentChars, tokens });
   recordGenerated(store, projectId, "wiki", key, section, { model: res.model, requestedModel: model, sources: brief.sources, validation, costUsd: cost, tokens, attempts, inputHash: brief.hash });

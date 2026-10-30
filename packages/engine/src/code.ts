@@ -705,10 +705,10 @@ export async function explainFile(store: Store, projectId: string, file: string,
       calls++;
       cost += res.costUsd ?? 0;
       tokens = tokens ? addTokens(tokens, res.tokens) : res.tokens ?? null;
-      return { out: CallResult.parse(res.json), model: res.model, chars: u.length + CODE_SYSTEM_PROMPT.length, tokens: res.tokens ?? null, cost: res.costUsd ?? 0 };
+      return { out: CallResult.parse(res.json), model: res.model, chars: u.length + CODE_SYSTEM_PROMPT.length, tokens: res.tokens ?? null, cost: res.costUsd ?? 0, calls: res.calls ?? 1 };
     };
     let r = await call(user, withFile);
-    let attempts = 1, chars = r.chars, callTokens = r.tokens, callCost = r.cost;
+    let attempts = r.calls, chars = r.chars, callTokens = r.tokens, callCost = r.cost;
     const asked = new Set(batch.map((s) => s.key));
     const got = new Map(r.out.symbols.filter((x) => asked.has(x.key)).map((x) => [x.key, x]));
     let fileOut = r.out.file;
@@ -717,7 +717,7 @@ export async function explainFile(store: Store, projectId: string, file: string,
       // One repair call, for what is missing only.
       log(`${file}: ${missing.length} symbols missing${withFile && !fileOut ? " and the file page" : ""}; one repair call`);
       const r2 = await call(renderRequest(f, symbols, missing, withFile && !fileOut, links, known), withFile && !fileOut);
-      attempts = 2;
+      attempts += r2.calls;
       chars += r2.chars;
       callTokens = callTokens && r2.tokens ? addTokens(callTokens, r2.tokens) : null;
       callCost += r2.cost;

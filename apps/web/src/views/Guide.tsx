@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type Claim, type Episode, type ExplanationInfo, type Step, type StoredExplanation } from "../api";
 import { DocBar, type DocResponse } from "../components/DocBar";
 import { HowBuilt } from "../components/HowBuilt";
+import { useSettingsChanged } from "../components/ModelSettings";
 import { AboutGuide } from "../components/AboutGuide";
 import { ModelSettings } from "../components/ModelSettings";
 import { BusyBar } from "../components/BusyBar";
@@ -78,6 +79,7 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
   useEffect(() => {
     load();
   }, [load]);
+  useSettingsChanged(load);
 
   const [stopping, setStopping] = useState(false);
   const stop = async () => {

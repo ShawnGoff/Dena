@@ -377,7 +377,7 @@ export async function updateSection(store: Store, projectId: string, key: Sectio
     if (!s) sections.push((s = { heading: a.heading, claims: [] }));
     s.claims.push(a.claim);
   }
-  const section: WikiSection = { title, summary, sections: sections.filter((s) => s.claims.length), uncertainty };
+  const section: WikiSection = { title, summary, sections: sections.filter((s) => s.claims.length), uncertainty, ...(before.learn ? { learn: before.learn } : {}) };
   const validation = validateSection(section, plan.brief);
   const pairs = new Map<string, string>();
   for (const [id, c] of replaced) pairs.set(c.text, byId.get(id)!.claim.text);

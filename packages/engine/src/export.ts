@@ -5,6 +5,17 @@ import { ensureDocRevision } from "./docs.ts";
 import type { Claim } from "./schema.ts";
 import { sectionKeys, sourceLabel, type WikiSource } from "./wiki.ts";
 import { isStandingLimitationText, standingLimitations } from "./packet.ts";
+import { howBuiltPage, howBuiltStep, type HowBuilt } from "./howbuilt.ts";
+
+/** "How the AI built this" as one line of counts, read from captured events. */
+export function howBuiltLine(h: HowBuilt): string {
+  const s = h.stats;
+  const parts = [s.sessions && `${s.sessions} Claude Code session${s.sessions === 1 ? "" : "s"}`, s.prompts && `${s.prompts} request${s.prompts === 1 ? "" : "s"} from the owner`,
+    s.aiEdits && `${s.aiEdits} AI edit${s.aiEdits === 1 ? "" : "s"}`, s.commands && `${s.commands} command${s.commands === 1 ? "" : "s"}`,
+    s.tests && `${s.tests} test run${s.tests === 1 ? "" : "s"}${s.testFailures ? ` (${s.testFailures} failed)` : ""}`, s.commits && `${s.commits} commit${s.commits === 1 ? "" : "s"}`,
+    s.notes && `${s.notes} note${s.notes === 1 ? "" : "s"} from the AI`].filter(Boolean);
+  return `Across ${h.scope}: ${parts.join(", ") || "no captured activity"}. Counted from captured events, not written by AI.`;
+}
 
 /**
  * The whole guide as one Markdown file, rendered from the structured documents (never the other
@@ -45,7 +56,7 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
   // Wiki pages, in their current revisions.
   const pages = sectionKeys(store, projectId).map((s) => ({ ...s, rev: ensureDocRevision(store, projectId, "wiki", s.key) })).filter((p) => p.rev);
   for (const p of pages) {
-    const sec = p.rev!.content as { title: string; summary: string; sections: { heading: string; claims: Claim[] }[]; uncertainty: string[] };
+    const sec = p.rev!.content as { title: string; summary: string; sections: { heading: string; claims: Claim[] }[]; uncertainty: string[]; learn?: { concept: string; explanation: string }[] };
     const sources = new Map(((p.rev!.meta.sources ?? []) as WikiSource[]).map((s) => [s.ref, s]));
     const prefix = anchor(p.key);
     h2(p.key.startsWith("component:") ? `Component: ${p.title}` : sec.title || p.title);
@@ -53,6 +64,8 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
     for (const s of sec.sections) out.push("", `### ${s.heading}`, "", ...s.claims.map((c) => claimLine(c, (r) => `[${r}](#${prefix}-${r.toLowerCase()})`)));
     const uncertainPage = sec.uncertainty.filter((u) => !isStandingLimitationText(u));
     if (uncertainPage.length) out.push("", "### What is uncertain", "", ...uncertainPage.map((u) => `- ${u}`));
+    if (sec.learn?.length) out.push("", "### What you can learn here", "", ...sec.learn.map((c) => `- **${c.concept}** — ${c.explanation}`));
+    out.push("", "### How the AI built this", "", howBuiltLine(howBuiltPage(store, projectId, p.key)));
     const cited = [...new Set(sec.sections.flatMap((s) => s.claims.flatMap((c) => c.evidence)))].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
     if (cited.length) {
       out.push("", "<details><summary>Sources</summary>", "");
@@ -81,6 +94,9 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
         if ((st[k] as Claim[])?.length) out.push("", `**${label}**`, "", ...(st[k] as Claim[]).map((c) => claimLine(c, (r) => `[${r}](#${prefix}-${r.toLowerCase()})`)));
       const uncertain = ((st.uncertainty ?? []) as string[]).filter((u) => !isStandingLimitationText(u));
       if (uncertain.length) out.push("", "**What is uncertain**", "", ...uncertain.map((u) => `- ${u}`));
+      const concepts = (st.concepts ?? []) as { term: string; explanation: string }[];
+      if (concepts.length) out.push("", "**What you can learn here**", "", ...concepts.map((c) => `- **${c.term}** — ${c.explanation}`));
+      out.push("", "**How the AI built this**", "", howBuiltLine(howBuiltStep(store, projectId, e.id)));
       const cited = [...new Set(sections.flatMap(([k]) => ((st[k] ?? []) as Claim[]).flatMap((c) => c.evidence)))].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
       if (cited.length) {
         out.push("", "<details><summary>Evidence</summary>", "");

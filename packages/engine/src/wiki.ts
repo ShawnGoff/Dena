@@ -290,6 +290,8 @@ export const WikiSection = z.object({
   summary: z.string().min(1),
   sections: z.array(z.object({ heading: z.string().min(1), claims: z.array(Claim) })),
   uncertainty: z.array(z.string()),
+  /** "What you can learn here": general ideas the page teaches. Pages written before it existed have none. */
+  learn: z.array(z.object({ concept: z.string().min(1), explanation: z.string().min(1) })).optional(),
 });
 export type WikiSection = z.infer<typeof WikiSection>;
 
@@ -310,8 +312,12 @@ export const WIKI_JSON_SCHEMA = {
     summary: { type: "string" },
     sections: { type: "array", items: { type: "object", properties: { heading: { type: "string" }, claims: { type: "array", items: claimJson } }, required: ["heading", "claims"], additionalProperties: false } },
     uncertainty: { type: "array", items: { type: "string" } },
+    learn: {
+      type: "array",
+      items: { type: "object", properties: { concept: { type: "string" }, explanation: { type: "string" } }, required: ["concept", "explanation"], additionalProperties: false },
+    },
   },
-  required: ["title", "summary", "sections", "uncertainty"],
+  required: ["title", "summary", "sections", "uncertainty", "learn"],
   additionalProperties: false,
 };
 
@@ -340,6 +346,7 @@ Rules:
 - The sources are a selection, not everything that happened; the context says how much exists. Never conclude that something did not happen, or did not exist, because it is missing from the sources. Use the totals in the context for overall statements.
 - Many episodes may not be explained yet; say so in "uncertainty" when it limits the page, rather than filling gaps.
 - Prefer clear, plain sentences; explain terms the first time they appear.
+- "learn" ("What you can learn here"): 2–4 general ideas a reader can take away and use elsewhere: a technique, pattern, tool or way of working that the sources show in use. Each gets a short explanation of the idea itself. This is general knowledge, not a claim about the project, so it cites nothing; never put project facts there.
 - Cite sources by reference, e.g. ["S3", "S7"]. Use only references that exist. Every claim except "background" needs at least one.`;
 
 export interface WikiValidation {
@@ -469,6 +476,7 @@ export function renderWikiMarkdown(s: StoredSection): string {
     s.section.summary,
     ...s.section.sections.flatMap((sec) => ["", `## ${sec.heading}`, "", ...sec.claims.map((c) => `- **${badge[c.kind]}** — ${c.text}${c.evidence.length ? ` [${c.evidence.join(", ")}]` : ""}`)]),
     ...(s.section.uncertainty.length ? ["", "## What is uncertain", "", ...s.section.uncertainty.map((u) => `- ${u}`)] : []),
+    ...(s.section.learn?.length ? ["", "## What you can learn here", "", ...s.section.learn.map((c) => `- **${c.concept}** — ${c.explanation}`)] : []),
     ...(s.validation.issues.length ? ["", "## Checks", "", ...s.validation.issues.map((i) => `- ${i.severity === "error" ? "⚠️" : "ℹ️"} ${i.heading}${i.claim ? ` — “${i.claim}…”` : ""}: ${i.message}`)] : []),
     "", "## Sources", "",
     ...[...new Set(s.section.sections.flatMap((x) => x.claims.flatMap((c) => c.evidence)))].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))

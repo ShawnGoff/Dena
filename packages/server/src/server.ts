@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, lastHeartbeat, liveRecorder, Recorder, type RecorderOptions } from "@dena/adapters";
-import { adoptUpdate, planUpdate, updateSection, updateStep, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
+import { howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
   estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
@@ -347,6 +347,14 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     if (sub[0] === "export" && method === "GET") {
       const r = exportGuideMarkdown(store, p.id);
       return { filename: `${p.name.replace(/[^\w.-]+/g, "-")}-guide.md`, markdown: r.markdown, counts: r.counts };
+    }
+
+    if (sub[0] === "how-built" && method === "GET") {
+      const type = url.searchParams.get("type");
+      const key = String(url.searchParams.get("key") ?? "");
+      if (type === "step" && loadEpisodes(store, p.id).some((e) => e.id === key)) return howBuiltStep(store, p.id, key);
+      if (type === "wiki" && sectionKeys(store, p.id).some((s) => s.key === key)) return howBuiltPage(store, p.id, key);
+      throw new HttpError(404, "No such document");
     }
 
     if (sub[0] === "doc") {

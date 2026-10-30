@@ -8,13 +8,14 @@ import { BusyBar, ModelChoice } from "../components/BusyBar";
 import { ModelSettings } from "../components/ModelSettings";
 import { isStandingLimitationText, tokenLine, tokenRange, when } from "../format";
 import { AboutGuide } from "../components/AboutGuide";
+import { HowBuilt } from "../components/HowBuilt";
 
 interface PageInfo { key: string; title: string; sources: number; chars: number; generated: boolean; stale: boolean; model: string | null }
 interface Source { ref: string; type: "fact" | "claim" | "code"; grade: keyof typeof KIND; text: string; unitId: string | null; eventIds: number[]; files?: string[] }
 interface Claim { text: string; kind: keyof typeof KIND; evidence: string[]; edited?: boolean; flagged?: "incorrect" }
 type SectionContent = Stored["section"];
 interface Stored {
-  section: { title: string; summary: string; sections: { heading: string; claims: Claim[] }[]; uncertainty: string[] };
+  section: { title: string; summary: string; sections: { heading: string; claims: Claim[] }[]; uncertainty: string[]; learn?: { concept: string; explanation: string }[] };
   validation: { ok: boolean; issues: { severity: string; heading: string; claim?: string; message: string }[]; groundedShare: number };
   sources: Source[];
   model: string | null;
@@ -191,6 +192,13 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
           {s.section.uncertainty.filter((u) => !isStandingLimitationText(u)).length > 0 && (
             <section className="step-section"><h3>What is uncertain</h3><ul className="plain">{s.section.uncertainty.filter((u) => !isStandingLimitationText(u)).map((u, i) => <li key={i}>{u}</li>)}</ul></section>
           )}
+          {s.section.learn && s.section.learn.length > 0 && (
+            <section className="step-section"><h3>What you can learn here</h3>
+              <div className="concepts">{s.section.learn.map((c) => <div key={c.concept} className="concept"><b>📘 {c.concept}</b><span>{c.explanation}</span></div>)}</div>
+              <p className="faint small">General knowledge the page draws on, not claims about this project.</p>
+            </section>
+          )}
+          {viewing == null && <HowBuilt projectId={projectId} type="wiki" docKey={pageKey} onEvent={onEvent} />}
           {s.validation.issues.length > 0 && (
             <section className="step-section"><h3>Checks</h3>
               <ul className="plain">{s.validation.issues.map((p, i) => <li key={i}><Badge tone={p.severity === "error" ? "bad" : "warn"}>{p.severity === "error" ? "failed" : "note"}</Badge> {p.heading}{p.claim ? ` — “${p.claim}…”` : ""}: {p.message}</li>)}</ul>

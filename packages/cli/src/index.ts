@@ -2,7 +2,7 @@
 import os from "node:os";
 import path from "node:path";
 import { correlate, displaySummary, Store, type StoredEvent } from "@dena/core";
-import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles } from "@dena/adapters";
+import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, transcriptFiles, withoutPaused } from "@dena/adapters";
 import { exportGuideHtml, codeOverview, codePage, explainFile, formatTokenRange, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, formatTokens, exportGuideMarkdown, buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
 import { startServer } from "@dena/server";
@@ -119,7 +119,7 @@ async function main() {
         for (const f of files) {
           const t0 = Date.now();
           const { batch, report } = await claudeCode.importTranscript(f, p.rootPath);
-          const r = store.ingest(p.id, batch);
+          const r = store.ingest(p.id, withoutPaused(store, p.id, batch)); // paused time stays out of the guide
           if (!r.eventsInserted && !r.eventsSkippedDuplicate) {
             quiet++;
             continue;
@@ -141,7 +141,7 @@ async function main() {
           break;
         }
         const { batch, report } = git.importGit(p.rootPath);
-        const r = store.ingest(p.id, batch);
+        const r = store.ingest(p.id, withoutPaused(store, p.id, batch));
         console.log(`git: ${report.commits} commits, ${report.branchChanges} branch switches → +${r.eventsInserted} events, ${r.artifactsStored} diffs `
           + `| redacted ${report.redactions.count}, withheld ${report.filesWithheld} sensitive files, ${report.diffsTruncated} diffs truncated`);
         importGitIfChanged(store, p.id, p.rootPath); // set the recorder's fingerprint

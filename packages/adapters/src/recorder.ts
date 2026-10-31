@@ -33,6 +33,40 @@ export function transcriptFiles(root: string, scope: "own" | "all", claudeHome =
   });
 }
 
+// ---- paused windows ----
+
+/**
+ * Pausing is private: anything stamped inside a paused window (a conversation, a commit, a file
+ * change) is left out, even when it is read later from Claude Code's transcripts or git history.
+ * Stopping is different: work done while Dena was off is caught up when recording starts again.
+ */
+export interface Window { from: string; to: string }
+
+export function pausedWindows(store: Store, projectId: string): Window[] {
+  try {
+    return JSON.parse(store.getCursor(projectId, "dena", "paused_windows") ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+export function addPausedWindow(store: Store, projectId: string, w: Window): void {
+  if (w.to <= w.from) return;
+  store.setCursor(projectId, "dena", "paused_windows", JSON.stringify([...pausedWindows(store, projectId), w]));
+}
+
+/** The batch without anything that happened while recording was paused. */
+export function withoutPaused<T extends { events: { occurredAt: string; sourceEventId: string }[]; links: any[]; artifacts: any[] }>(store: Store, projectId: string, batch: T): T {
+  const windows = pausedWindows(store, projectId);
+  if (!windows.length) return batch;
+  const inside = (t: string) => windows.some((w) => t >= w.from && t <= w.to);
+  const dropped = new Set(batch.events.filter((e) => inside(e.occurredAt)).map((e) => e.sourceEventId));
+  if (!dropped.size) return batch;
+  return { ...batch, events: batch.events.filter((e) => !dropped.has(e.sourceEventId)),
+    links: batch.links.filter((l) => !dropped.has(l.fromSourceEventId) && !dropped.has(l.toSourceEventId)),
+    artifacts: batch.artifacts.filter((a) => !dropped.has(a.sourceEventId)) };
+}
+
 /** Imports transcripts that changed since the last import. Unchanged files are skipped by size+mtime. */
 export async function importChangedTranscripts(store: Store, projectId: string, root: string, opts: RecorderOptions = {}) {
   const log = opts.log ?? (() => {});
@@ -48,7 +82,7 @@ export async function importChangedTranscripts(store: Store, projectId: string, 
     if (store.getCursor(projectId, claudeCode.SOURCE, f) === fingerprint) continue;
     try {
       const { batch, report } = await claudeCode.importTranscript(f, root);
-      const r = store.ingest(projectId, batch);
+      const r = store.ingest(projectId, withoutPaused(store, projectId, batch));
       events += r.eventsInserted;
       if (r.eventsInserted) log(`claude: +${r.eventsInserted} events from ${path.basename(f)}${report.excludedGroups ? ` (${report.excludedGroups} prompt groups belonged to other projects)` : ""}`);
       store.setCursor(projectId, claudeCode.SOURCE, f, fingerprint);
@@ -74,7 +108,7 @@ export function importGitIfChanged(store: Store, projectId: string, root: string
   }
   if (store.getCursor(projectId, git.SOURCE, "fingerprint") === fingerprint) return 0;
   const { batch } = git.importGit(root);
-  const r = store.ingest(projectId, batch);
+  const r = store.ingest(projectId, withoutPaused(store, projectId, batch));
   store.setCursor(projectId, git.SOURCE, "fingerprint", fingerprint);
   if (r.eventsInserted) log(`git: +${r.eventsInserted} events`);
   return r.eventsInserted;
@@ -132,7 +166,14 @@ export class Recorder {
 
   async start(): Promise<void> {
     const now = new Date().toISOString();
+    // A pause that never ended (Dena quit while paused) stays private up to now.
+    const openPause = this.store.getCursor(this.projectId, "dena", "paused_at");
+    if (openPause) {
+      addPausedWindow(this.store, this.projectId, { from: openPause, to: now });
+      this.store.setCursor(this.projectId, "dena", "paused_at", "");
+    }
     const lastStop = this.store.getCursor(this.projectId, "dena", "last_stopped_at");
+    const before = (this.store.db.prepare("SELECT MAX(id) n FROM event WHERE project_id = ?").get(this.projectId) as { n: number | null }).n ?? 0;
     if (lastStop)
       this.store.recordGap(this.projectId, { sessionId: null, source: "dena", fromTime: lastStop, toTime: now,
         reason: "Dena was not recording; file changes in this window are recovered by the startup scan without exact times" });
@@ -142,8 +183,9 @@ export class Recorder {
     this.store.setRecordingState(this.projectId, "recording");
     this.state = "recording";
     this.beat();
-    this.startFs();
+    this.startFs({ quiet: !!openPause });
     await this.tick();
+    if (lastStop) this.recordCatchUp(before, lastStop, now);
     this.timer = setInterval(() => void this.tick(), this.opts.pollMs ?? 5_000);
     // Hook calls ring the doorbell: react within a second instead of waiting for the next poll.
     const spool = path.join(this.store.home, "spool");
@@ -157,14 +199,30 @@ export class Recorder {
 
   private spoolWatcher: fs.FSWatcher | null = null;
 
-  private startFs() {
+  /** What starting again recovered from while Dena was off, for the page to show. Counted, never written by a model. */
+  private recordCatchUp(afterId: number, from: string, to: string) {
+    const count = (where: string, what = "*") => (this.store.db
+      .prepare(`SELECT COUNT(${what}) n FROM event WHERE project_id = ? AND id > ? AND occurred_at <= ? AND source NOT LIKE 'dena%' AND ${where}`)
+      .get(this.projectId, afterId, to) as { n: number }).n;
+    const prompts = "event_type = 'prompt_submitted' AND actor = 'user'";
+    this.store.setCursor(this.projectId, "dena", "last_catch_up", JSON.stringify({
+      from, to, at: new Date().toISOString(),
+      conversations: count(prompts, "DISTINCT session_id"),
+      prompts: count(prompts),
+      commits: count("event_type = 'git_commit'"),
+      fileChanges: count("event_type IN ('file_created','file_modified','file_deleted')"),
+      pausedLeftOut: pausedWindows(this.store, this.projectId).filter((w) => w.to > from).length,
+    }));
+  }
+
+  private startFs(opts: { quiet?: boolean } = {}) {
     this.fs = new FsCapture(this.store, this.projectId, this.root, {
       onIngest: (s) => s.forEach((x) => this.log(`fs: ${x}`)),
       onError: (e) => this.log(`fs: ${(e as Error).message}`),
     });
     this.fs.sessionId = this.sessionId;
-    const scan = this.fs.scan();
-    this.log(scan.baseline ? "fs: baseline captured" : `fs: ${scan.changes} changes found from while not recording`);
+    const scan = this.fs.scan(opts);
+    this.log(opts.quiet ? "fs: took the folder as it is now (changes made while paused are left out)" : scan.baseline ? "fs: baseline captured" : `fs: ${scan.changes} changes found from while not recording`);
     this.fs.start();
   }
 
@@ -180,12 +238,16 @@ export class Recorder {
         this.fs = null;
         this.state = "paused";
         this.pausedAt = new Date().toISOString();
-        this.log("paused — nothing is being captured");
+        this.store.setCursor(this.projectId, "dena", "paused_at", this.pausedAt); // so a pause survives Dena quitting
+        this.log("paused — nothing is being captured, and this time stays out of the guide");
       } else if (wanted === "recording" && this.state === "paused") {
-        this.store.recordGap(this.projectId, { sessionId: this.sessionId, source: "dena", fromTime: this.pausedAt, toTime: new Date().toISOString(),
-          reason: "Recording was paused by the user" });
+        const resumedAt = new Date().toISOString();
+        this.store.recordGap(this.projectId, { sessionId: this.sessionId, source: "dena", fromTime: this.pausedAt, toTime: resumedAt,
+          reason: "Recording was paused by the user; this time is left out on purpose" });
+        addPausedWindow(this.store, this.projectId, { from: this.pausedAt!, to: resumedAt });
+        this.store.setCursor(this.projectId, "dena", "paused_at", "");
         this.state = "recording";
-        this.startFs();
+        this.startFs({ quiet: true });
         this.log("resumed");
       }
       if (this.state !== "recording") return;
@@ -209,6 +271,10 @@ export class Recorder {
 
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
+    if (this.state === "paused" && this.pausedAt) {
+      addPausedWindow(this.store, this.projectId, { from: this.pausedAt, to: new Date().toISOString() });
+      this.store.setCursor(this.projectId, "dena", "paused_at", "");
+    }
     this.spoolWatcher?.close();
     this.fs?.stop();
     if (this.state === "recording") {

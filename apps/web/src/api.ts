@@ -108,6 +108,20 @@ export interface Overview {
   recent: EventLite[];
   authors: { unknown: number; likelyAi: number; possiblyAi: number; unclear: number };
   episodes: { total: number; explained: number; latest: Omit<Episode, "explained">[] };
+  /** What the last start of recording recovered from while Dena was off. */
+  catchUp: CatchUp | null;
+  /** Times recording was paused; what happened then is left out of the guide. */
+  pausedWindows: number;
+}
+export interface CatchUp { from: string; to: string; at: string; conversations: number; prompts: number; commits: number; fileChanges: number; pausedLeftOut: number }
+
+/** "3 conversations (12 prompts), 2 commits and 5 file changes", or null when nothing was missed. */
+export function catchUpText(c: CatchUp | null): string | null {
+  if (!c) return null;
+  const parts = [c.conversations && `${c.conversations} ${c.conversations === 1 ? "conversation" : "conversations"} (${c.prompts} ${c.prompts === 1 ? "prompt" : "prompts"})`,
+    c.commits && `${c.commits} ${c.commits === 1 ? "commit" : "commits"}`, c.fileChanges && `${c.fileChanges} file ${c.fileChanges === 1 ? "change" : "changes"}`].filter(Boolean) as string[];
+  if (!parts.length) return null;
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0]!;
 }
 export interface EventDetail {
   event: {

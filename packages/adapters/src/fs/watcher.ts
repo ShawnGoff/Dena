@@ -116,8 +116,9 @@ export class FsCapture {
    * - First run for a project: records a baseline, emits no change events.
    * - Later runs: emits changes made while Dena was not recording, labeled as such.
    */
-  scan(): { baseline: boolean; changes: number } {
-    const baseline = this.state.size === 0 && !this.store.getCursor(this.projectId, SOURCE, "baseline_at");
+  scan(opts: { quiet?: boolean } = {}): { baseline: boolean; changes: number } {
+    // quiet: take the folder as it is now without recording what changed (after a private pause).
+    const baseline = (this.state.size === 0 && !this.store.getCursor(this.projectId, SOURCE, "baseline_at")) || !!opts.quiet;
     const files = this.walk();
     const seen = new Set(files);
     const batch = emptyBatch();
@@ -130,10 +131,12 @@ export class FsCapture {
       if (baseline) this.commit(rel, cur, this.snapshotOf(rel, cur));
       else if (this.change(batch, rel, prev, cur, "startup_scan")) changes++;
     }
-    if (!baseline)
-      for (const rel of [...this.state.keys()])
-        if (!seen.has(rel) && !this.isExcluded(rel) && this.change(batch, rel, this.state.get(rel), null, "startup_scan")) changes++;
-    if (baseline) this.store.setCursor(this.projectId, SOURCE, "baseline_at", new Date().toISOString());
+    for (const rel of [...this.state.keys()])
+      if (!seen.has(rel) && !this.isExcluded(rel)) {
+        if (!baseline && this.change(batch, rel, this.state.get(rel), null, "startup_scan")) changes++;
+        else if (baseline) this.commit(rel, null, null);
+      }
+    if (baseline && !opts.quiet) this.store.setCursor(this.projectId, SOURCE, "baseline_at", new Date().toISOString());
     this.ingest(batch);
     return { baseline, changes };
   }

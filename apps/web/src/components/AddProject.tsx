@@ -52,6 +52,7 @@ function AddDialog({ initial, onClose, onAdded }: { initial: string; onClose: ()
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<Added | null>(null);
+  const [browsing, setBrowsing] = useState(!initial);
   useEffect(() => {
     const esc = (e: KeyboardEvent) => e.key === "Escape" && !busy && onClose();
     window.addEventListener("keydown", esc);
@@ -80,8 +81,12 @@ function AddDialog({ initial, onClose, onAdded }: { initial: string; onClose: ()
             <p className="muted">Dena reads the folder's past from what is already on your computer: conversations Claude Code still has, and its git history.
               No AI is used, and nothing is sent anywhere.</p>
             <label className="field"><span className="faint small">Folder</span>
-              <input value={path} onChange={(e) => { setPath(e.target.value); if (!name || name === path.split("/").pop()) setName(e.target.value.split("/").filter(Boolean).pop() ?? ""); }}
-                placeholder="~/code/my-app" autoFocus={!initial} spellCheck={false} /></label>
+              <span className="row" style={{ gap: 6 }}>
+                <input style={{ flex: 1 }} value={path} onChange={(e) => { setPath(e.target.value); if (!name || name === path.split("/").pop()) setName(e.target.value.split("/").filter(Boolean).pop() ?? ""); }}
+                  placeholder="~/code/my-app" autoFocus={!initial} spellCheck={false} />
+                <button className="btn" type="button" onClick={() => setBrowsing(!browsing)}>{browsing ? "Close" : "Browse…"}</button>
+              </span></label>
+            {browsing && <FolderBrowser start={path} onPick={(p) => { setPath(shortPath(p)); setName(p.split("/").pop() ?? ""); setBrowsing(false); }} />}
             <label className="field"><span className="faint small">Name</span>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-app" /></label>
           </>
@@ -104,6 +109,47 @@ function AddDialog({ initial, onClose, onAdded }: { initial: string; onClose: ()
           <button className="btn" disabled={busy} onClick={onClose}>{done ? "Close" : "Cancel"}</button>
           {!done && <button className="btn primary" disabled={busy || !path.trim()} onClick={add}>{busy ? "Reading its past…" : "Add project"}</button>}
         </div>
+      </div>
+    </div>
+  );
+}
+
+interface Listing { path: string; parent: string | null; home: string; git: boolean; claude: boolean; added: boolean; dirs: { name: string; path: string; git: boolean; claude: boolean; added: boolean }[] }
+
+/** Folders inside your home folder, from Dena's own server: a web page cannot see real paths itself. */
+function FolderBrowser({ start, onPick }: { start: string; onPick: (path: string) => void }) {
+  const [at, setAt] = useState(start.trim() || "~");
+  const [l, setL] = useState<Listing | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    setErr(null);
+    api<Listing>(`browse?path=${encodeURIComponent(at)}`).then(setL, (e) => {
+      setErr(String(e.message));
+      if (at !== "~") setAt("~");
+    });
+  }, [at]);
+  if (!l) return err ? <div className="error">{err}</div> : <p className="faint small">Opening…</p>;
+  const tags = (d: { git: boolean; claude: boolean; added: boolean }) => (
+    <>{d.added && <span className="badge">in Dena</span>}{d.claude && <span className="badge accent">Claude Code</span>}{d.git && <span className="badge">git</span>}</>
+  );
+  return (
+    <div className="browser">
+      <div className="browser-head">
+        {l.parent && <button className="linkish small" onClick={() => setAt(l.parent!)}>↑ Up</button>}
+        <span className="mono small browser-path" title={l.path}>{shortPath(l.path)}</span>
+        <span className="row" style={{ gap: 4 }}>{tags(l)}</span>
+      </div>
+      <div className="browser-list">
+        {l.dirs.length === 0 && <p className="faint small" style={{ padding: "6px 10px" }}>No folders inside.</p>}
+        {l.dirs.map((d) => (
+          <button key={d.path} className="browser-row" onClick={() => setAt(d.path)} title="Open this folder">
+            <span>📁 {d.name}</span><span className="row" style={{ gap: 4 }}>{tags(d)}</span>
+          </button>
+        ))}
+      </div>
+      <div className="row" style={{ justifyContent: "space-between", marginTop: 8 }}>
+        <span className="faint small">{l.git || l.claude ? "This looks like a project." : "Open a folder, or choose this one."}</span>
+        <button className="btn primary" disabled={l.added || l.path === l.home} onClick={() => onPick(l.path)}>{l.added ? "Already in Dena" : "Choose this folder"}</button>
       </div>
     </div>
   );

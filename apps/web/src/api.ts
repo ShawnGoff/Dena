@@ -54,6 +54,8 @@ export interface Project {
   recorderHere?: boolean;
   recorderElsewherePid?: number | null;
   stats?: Stats;
+  /** The sidebar folder it is grouped under. */
+  folder?: string | null;
 }
 export interface Stats {
   sessions: number;

@@ -195,7 +195,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
   async function api(method: string, parts: string[], url: URL, body: any): Promise<unknown> {
     // /api/projects
     if (parts.length === 1 && parts[0] === "projects" && method === "GET")
-      return store.listProjects().map((p) => ({ ...p, ...recorderState(p.id), stats: store.stats(p.id) }));
+      return store.listProjects().map((p) => ({ ...p, ...recorderState(p.id), stats: store.stats(p.id), folder: store.projectSettings(p.id).folder ?? null }));
 
     // Folders you worked in with Claude Code that Dena does not know yet. Read-only; nothing is recorded.
     if (parts[0] === "discover" && parts.length === 1 && method === "GET") return { folders: suggestions() };
@@ -203,6 +203,34 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       const dir = String(body?.path ?? "");
       fs.writeFileSync(dismissedFile, JSON.stringify([...new Set([...dismissed(), dir])], null, 2));
       return { folders: suggestions() };
+    }
+
+    // Browse folders inside your home folder, to pick one to add. Names only; nothing is read inside them.
+    if (parts[0] === "browse" && parts.length === 1 && method === "GET") {
+      const home = fs.realpathSync(os.homedir());
+      const asked = String(url.searchParams.get("path") ?? "").replace(/^~(?=\/|$)/, home) || home;
+      let dir: string;
+      try {
+        dir = fs.realpathSync(asked);
+      } catch {
+        throw new HttpError(404, "That folder does not exist");
+      }
+      if (dir !== home && !dir.startsWith(`${home}/`)) throw new HttpError(403, "Browsing is limited to your home folder");
+      const used = new Set(foldersUsedWithClaude(opts.recorder?.claudeHome).map((f) => f.path));
+      const known = new Set(store.listProjects().map((x) => x.rootPath));
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        throw new HttpError(403, "Dena cannot open that folder");
+      }
+      const dirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith(".") && !["node_modules", "Library"].includes(e.name) || (e.isSymbolicLink() && !e.name.startsWith(".")))
+        .map((e) => path.join(dir, e.name))
+        .filter((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } })
+        .sort((a, b) => path.basename(a).localeCompare(path.basename(b), undefined, { sensitivity: "base" }))
+        .slice(0, 500)
+        .map((d) => ({ name: path.basename(d), path: d, git: fs.existsSync(path.join(d, ".git")), claude: used.has(d), added: known.has(d) }));
+      return { path: dir, parent: dir === home ? null : path.dirname(dir), home, git: fs.existsSync(path.join(dir, ".git")), claude: used.has(dir), added: known.has(dir), dirs };
     }
 
     // Add a project and import its past: Claude Code's transcripts and git history. No model is used.
@@ -240,6 +268,29 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     if (parts[0] !== "projects" || !parts[1]) throw new HttpError(404, "Not found");
     const p = project(parts[1]);
     const sub = parts.slice(2);
+
+    // Remove a project from Dena: its recorded history, explanations and pages. The folder and
+    // its files are never touched. Recording and anything running for it stop first.
+    if (sub.length === 0 && method === "DELETE") {
+      const elsewhere = !recorders.has(p.id) ? liveRecorder(store, p.id) : null;
+      if (elsewhere) throw new HttpError(409, `Another Dena (pid ${elsewhere.pid}) is recording this project. Stop it there first.`);
+      const rec = recorders.get(p.id);
+      if (rec) {
+        recorders.delete(p.id);
+        await rec.stop();
+      }
+      for (const [key, c] of inFlight) if (key.startsWith(`${p.id}:`)) c.abort();
+      cancelQueued(store, p.id);
+      const t = timers.get(p.id);
+      if (t) clearTimeout(t);
+      timers.delete(p.id);
+      resumable.delete(p.id);
+      // Not suggested again under "Worked in recently": you just chose to remove it.
+      fs.writeFileSync(dismissedFile, JSON.stringify([...new Set([...dismissed(), p.rootPath])], null, 2));
+      store.deleteProject(p.id);
+      log(`removed project ${p.name} from Dena (its folder ${p.rootPath} is untouched)`);
+      return { removed: true, name: p.name, folder: p.rootPath };
+    }
 
     if (sub.length === 1 && sub[0] === "overview" && method === "GET") {
       const recent = store.db.prepare("SELECT id FROM event WHERE project_id = ? ORDER BY occurred_at DESC, id DESC LIMIT 12").all(p.id) as { id: number }[];
@@ -665,6 +716,11 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
           if (body.depth !== "concise" && body.depth !== "thorough") throw new HttpError(400, "depth is concise or thorough");
           patch.depth = body.depth;
         }
+        if ("folder" in (body ?? {})) {
+          const f = body.folder;
+          if (f !== null && (typeof f !== "string" || f.trim().length > 60)) throw new HttpError(400, "A folder name is up to 60 characters, or none");
+          patch.folder = f === null || !f.trim() ? undefined : f.trim();
+        }
         if ("maxTokensPerRun" in (body ?? {})) {
           const v = body.maxTokensPerRun;
           if (v !== null && (typeof v !== "number" || !Number.isFinite(v) || v < 5_000)) throw new HttpError(400, "The budget is a number of tokens, at least 5,000, or none");
@@ -673,7 +729,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         store.updateProjectSettings(p.id, patch);
       } else if (method !== "GET") throw new HttpError(405, "Method not allowed");
       const s2 = store.projectSettings(p.id);
-      return { model: s2.model ?? null, depth: s2.depth, auth: s2.auth ?? "account", maxUsdPerRun: s2.maxUsdPerRun ?? null, maxTokensPerRun: s2.maxTokensPerRun ?? null };
+      return { model: s2.model ?? null, depth: s2.depth, auth: s2.auth ?? "account", maxUsdPerRun: s2.maxUsdPerRun ?? null, maxTokensPerRun: s2.maxTokensPerRun ?? null, folder: s2.folder ?? null };
     }
 
     if (sub[0] === "events" && sub.length === 2 && method === "GET") {

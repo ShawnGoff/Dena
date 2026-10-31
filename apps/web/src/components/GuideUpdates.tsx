@@ -13,7 +13,9 @@ interface Updates {
   tokens: { prompt: number; output: number; low: number; high: number; calibrated: boolean; basis: string };
   jobs: Job[];
   running: boolean;
-  settings: { model: string | null; maxUsdPerRun: number | null };
+  /** Updates queued before Dena last stopped, which wait for a yes instead of resuming on their own. */
+  waitingFromBefore: boolean;
+  settings: { model: string | null; maxUsdPerRun: number | null; maxTokensPerRun?: number | null };
 }
 
 const STATUS_TONE: Record<string, string> = { done: "ok", failed: "bad", running: "accent", queued: "muted", cancelled: "muted" };
@@ -31,7 +33,7 @@ export function GuideUpdates({ projectId }: { projectId: string }) {
     load();
   }, [load]);
   useSettingsChanged(load);
-  const active = !!u && (u.running || u.jobs.some((j) => j.status === "queued" || j.status === "running"));
+  const active = !!u && !u.waitingFromBefore && (u.running || u.jobs.some((j) => j.status === "queued" || j.status === "running"));
   useEffect(() => {
     if (!active) return;
     const t = setInterval(load, 3000);
@@ -57,7 +59,17 @@ export function GuideUpdates({ projectId }: { projectId: string }) {
     <div className="card">
       <h2>Keeping the guide current</h2>
       {err && <div className="error">{err}</div>}
-      {u.outdated.length === 0 && !u.waiting.length && !active && <p className="muted" style={{ margin: 0 }}>Everything written so far matches the captured evidence.</p>}
+      {u.waitingFromBefore && (
+        <div className="notice" style={{ marginBottom: 10 }}>
+          {u.jobs.filter((j) => j.status === "queued").length} {u.jobs.filter((j) => j.status === "queued").length === 1 ? "update was" : "updates were"} still waiting when Dena last stopped.
+          They will not run, or use any of your plan, until you say so.
+          <span className="row" style={{ marginTop: 8 }}>
+            <button className="btn primary" disabled={busy} onClick={() => post("resume")}>Continue them</button>
+            <button className="btn" disabled={busy} onClick={() => post("cancel")}>Cancel them</button>
+          </span>
+        </div>
+      )}
+      {u.outdated.length === 0 && !u.waiting.length && !active && !u.waitingFromBefore && <p className="muted" style={{ margin: 0 }}>Everything written so far matches the captured evidence.</p>}
       {u.outdated.length > 0 && (
         <>
           <p className="muted" style={{ marginTop: 0 }}>
@@ -78,7 +90,7 @@ export function GuideUpdates({ projectId }: { projectId: string }) {
           </div>
           <div className="row" style={{ marginTop: 10 }}>
             <button className="btn primary" disabled={busy || active} onClick={() => post("run")}>{active ? "Updating…" : `Update ${u.outdated.length === 1 ? "it" : `all ${u.outdated.length}`}`}</button>
-            {u.settings.maxUsdPerRun != null && <span className="faint small">Stops before ${u.settings.maxUsdPerRun} of usage.</span>}
+            {u.settings.maxTokensPerRun != null && <span className="faint small">Stops at about {Math.round(u.settings.maxTokensPerRun / 1000)}k tokens; the rest waits for the next run.</span>}
           </div>
         </>
       )}

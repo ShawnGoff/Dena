@@ -126,8 +126,10 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     const elsewhere = !here ? liveRecorder(store, projectId) : null;
     return { recorderRunning: here || !!elsewhere, recorderHere: here, recorderElsewherePid: elsewhere?.pid ?? null };
   };
-  for (const p of store.listProjects())
-    if (store.db.prepare("SELECT 1 FROM update_job WHERE project_id = ? AND status = 'queued'").get(p.id)) setTimeout(() => runUpdates(p.id), 2_000);
+  // Updates still queued from before Dena last stopped do not resume on their own: Dena may now be
+  // starting at login, and spending usage nobody asked for today is not acceptable. The Overview
+  // asks whether to continue them.
+  const resumable = new Set(store.listProjects().filter((p) => store.db.prepare("SELECT 1 FROM update_job WHERE project_id = ? AND status = 'queued'").get(p.id)).map((p) => p.id));
   /** A provider per call, so each project's sign-in setting applies. */
   const getProvider = (projectId: string): Provider => {
     if (opts.provider) return opts.provider;
@@ -367,18 +369,27 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         const plans = outdated.map((o) => planUpdate(store, p.id, o.type, o.key)?.estimate).filter((x): x is NonNullable<typeof x> => !!x);
         const tokens = { prompt: plans.reduce((n, t) => n + t.promptTokens, 0), output: plans.reduce((n, t) => n + t.outputTokens, 0),
           low: plans.reduce((n, t) => n + t.low, 0), high: plans.reduce((n, t) => n + t.high, 0), calibrated: plans.every((t) => t.calibrated), basis: plans[0]?.basis ?? "" };
-        return { outdated, waiting: all.filter((o) => o.waiting), estimate: null, tokens, jobs: listJobs(store, p.id, 30), running: runners.has(p.id),
-          settings: { model: store.projectSettings(p.id).model ?? null, maxUsdPerRun: store.projectSettings(p.id).maxUsdPerRun ?? null } };
+        return { outdated, waiting: all.filter((o) => o.waiting), estimate: null, tokens, waitingFromBefore: resumable.has(p.id) && !runners.has(p.id), jobs: listJobs(store, p.id, 30), running: runners.has(p.id),
+          settings: { model: store.projectSettings(p.id).model ?? null, maxUsdPerRun: store.projectSettings(p.id).maxUsdPerRun ?? null, maxTokensPerRun: store.projectSettings(p.id).maxTokensPerRun ?? null } };
       }
       if (method !== "POST") throw new HttpError(405, "Method not allowed");
       if (sub[1] === "run") {
         const outdated = findOutdated(store, p.id).filter((o) => !o.waiting);
         const wanted = Array.isArray(body?.items) ? outdated.filter((o) => body.items.some((i: any) => i?.type === o.type && i?.key === o.key)) : outdated;
         const queued = enqueue(store, p.id, wanted.map((o) => ({ type: o.type, key: o.key })));
+        resumable.delete(p.id);
         runUpdates(p.id);
         return { queued };
       }
-      if (sub[1] === "cancel") return { cancelled: cancelQueued(store, p.id) };
+      if (sub[1] === "resume") {
+        resumable.delete(p.id);
+        runUpdates(p.id);
+        return { resumed: true };
+      }
+      if (sub[1] === "cancel") {
+        resumable.delete(p.id);
+        return { cancelled: cancelQueued(store, p.id) };
+      }
       throw new HttpError(404, "Not found");
     }
 
@@ -535,10 +546,15 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
           if (body.depth !== "concise" && body.depth !== "thorough") throw new HttpError(400, "depth is concise or thorough");
           patch.depth = body.depth;
         }
+        if ("maxTokensPerRun" in (body ?? {})) {
+          const v = body.maxTokensPerRun;
+          if (v !== null && (typeof v !== "number" || !Number.isFinite(v) || v < 5_000)) throw new HttpError(400, "The budget is a number of tokens, at least 5,000, or none");
+          patch.maxTokensPerRun = v ?? undefined;
+        }
         store.updateProjectSettings(p.id, patch);
       } else if (method !== "GET") throw new HttpError(405, "Method not allowed");
       const s2 = store.projectSettings(p.id);
-      return { model: s2.model ?? null, depth: s2.depth, auth: s2.auth ?? "account", maxUsdPerRun: s2.maxUsdPerRun ?? null };
+      return { model: s2.model ?? null, depth: s2.depth, auth: s2.auth ?? "account", maxUsdPerRun: s2.maxUsdPerRun ?? null, maxTokensPerRun: s2.maxTokensPerRun ?? null };
     }
 
     if (sub[0] === "events" && sub.length === 2 && method === "GET") {

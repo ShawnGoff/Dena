@@ -312,3 +312,46 @@ describe("how the AI built this API", () => {
     expect((await req(`/api/projects/${pid}/how-built?type=wiki&key=nope`)).status).toBe(404);
   });
 });
+
+describe("updates left waiting", () => {
+  it("do not resume on their own when Dena starts; they wait for a yes", async () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), "dena-wait-"));
+    const s = new Store(h);
+    const p = s.createProject("waiting", "/nonexistent/waiting");
+    s.ingest(p.id, { sessions: [], artifacts: [], gaps: [], links: [], events: [
+      { sessionId: null, source: "t", sourceEventId: "p1", eventType: "prompt_submitted", occurredAt: "2026-10-01T10:00:00Z", actor: "user", summary: "Add a thing", payload: { text: "Add a thing" }, captureConfidence: "observed" },
+      { sessionId: null, source: "t", sourceEventId: "f1", eventType: "file_modified", occurredAt: "2026-10-01T10:01:00Z", actor: "ai_agent", summary: "Modified a.ts", payload: { file: "a.ts" }, captureConfidence: "observed" },
+    ] });
+    const ep = s.db.prepare("SELECT id FROM work_unit WHERE project_id = ?").get(p.id) as { id: string } | undefined;
+    const { loadEpisodes, enqueue } = await import("@dena/engine");
+    const key = ep?.id ?? loadEpisodes(s, p.id)[0]!.id;
+    enqueue(s, p.id, [{ type: "step", key }]);
+    const calls = fake.models.length;
+    const srv2 = await startServer(s, { port: 0, webDir: web, provider: fake });
+    const get = (pathname: string, method = "GET") => new Promise<any>((resolve) => {
+      const r = http.request({ host: "127.0.0.1", port: srv2.port, path: pathname, method, headers: { host: `127.0.0.1:${srv2.port}`, "x-dena-token": srv2.token, "content-type": "application/json" } }, (res) => {
+        let t = "";
+        res.on("data", (c) => (t += c));
+        res.on("end", () => resolve(JSON.parse(t)));
+      });
+      r.end(method === "POST" ? "{}" : undefined);
+    });
+    await new Promise((r) => setTimeout(r, 2_500)); // the old behaviour resumed after 2 seconds
+    const u = await get(`/api/projects/${p.id}/updates`);
+    expect(u.waitingFromBefore).toBe(true);
+    expect(u.jobs[0].status).toBe("queued");
+    expect(fake.models.length).toBe(calls); // no model call happened
+    await get(`/api/projects/${p.id}/updates/resume`, "POST");
+    let after: any;
+    for (let i = 0; i < 40; i++) {
+      after = await get(`/api/projects/${p.id}/updates`);
+      if (after.jobs[0].status !== "queued" && after.jobs[0].status !== "running") break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(after.waitingFromBefore).toBe(false);
+    expect(after.jobs[0].status).toBe("done");
+    await srv2.close();
+    s.close();
+    fs.rmSync(h, { recursive: true, force: true });
+  });
+});

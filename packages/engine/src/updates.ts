@@ -105,6 +105,7 @@ export interface RunResult {
   /** When the next retry is due, if any job is waiting on a backoff. */
   nextAt: string | null;
   spentUsd: number;
+  spentTokens: number;
   stoppedForBudget: boolean;
 }
 
@@ -116,11 +117,12 @@ export async function processDueJobs(store: Store, projectId: string, provider: 
   const now = opts.now ?? Date.now;
   const log = opts.log ?? (() => {});
   const cap = store.projectSettings(projectId).maxUsdPerRun;
-  const result: RunResult = { done: 0, failed: 0, retrying: 0, nextAt: null, spentUsd: 0, stoppedForBudget: false };
+  const tokenCap = store.projectSettings(projectId).maxTokensPerRun;
+  const result: RunResult = { done: 0, failed: 0, retrying: 0, nextAt: null, spentUsd: 0, spentTokens: 0, stoppedForBudget: false };
   const due = store.db.prepare("SELECT * FROM update_job WHERE project_id = ? AND status = 'queued' AND next_at <= ? ORDER BY id LIMIT 1");
   const set = store.db.prepare("UPDATE update_job SET status = ?, attempts = ?, next_at = ?, last_error = ?, result = ?, updated_at = ? WHERE id = ?");
   for (;;) {
-    if (cap !== undefined && result.spentUsd >= cap) {
+    if ((cap !== undefined && result.spentUsd >= cap) || (tokenCap !== undefined && result.spentTokens >= tokenCap)) {
       result.stoppedForBudget = true;
       break;
     }
@@ -137,14 +139,17 @@ export async function processDueJobs(store: Store, projectId: string, provider: 
       if (written) {
         const u = job.type === "step" ? await updateStep(store, projectId, job.key, provider, { log }) : await updateSection(store, projectId, job.key as SectionKey, provider, { log });
         result.spentUsd += u.costUsd;
+        result.spentTokens += u.tokens ? u.tokens.prompt + u.tokens.output : 0;
         summary = `update waiting for your review: ${u.diff.added.length} added, ${u.diff.changed.length} changed, ${u.diff.removed.length} removed, ${u.diff.kept} kept${u.ok ? "" : " (with check problems)"}`;
       } else if (job.type === "step") {
         const x = await explainEpisode(store, projectId, job.key, provider, { force: true, log });
         result.spentUsd += x.costUsd ?? 0;
+        result.spentTokens += x.tokens ? x.tokens.prompt + x.tokens.output : 0;
         summary = x.validation.ok ? "written" : "written, with check problems";
       } else {
         const s = await generateSection(store, projectId, job.key as SectionKey, provider, { force: true, log });
         result.spentUsd += s.costUsd ?? 0;
+        result.spentTokens += s.tokens ? s.tokens.prompt + s.tokens.output : 0;
         summary = s.validation.ok ? "written" : "written, with check problems";
       }
       set.run("done", job.attempts + 1, job.nextAt, null, summary, stamp(), job.id);

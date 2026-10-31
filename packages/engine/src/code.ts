@@ -830,12 +830,20 @@ export function folderPlan(store: Store, projectId: string, dir: string, model?:
 /** Explains every file in a folder that needs it, one file at a time; stops between files when asked. */
 export async function explainFolder(store: Store, projectId: string, dir: string, provider: Provider,
   opts: { model?: string; signal?: AbortSignal; log?: (m: string) => void; onProgress?: (p: { done: number; total: number; current: string | null }) => void } = {}):
-  Promise<{ files: number; explained: number; calls: number; tokens: TokenUsage | null }> {
+  Promise<{ files: number; explained: number; calls: number; tokens: TokenUsage | null; leftForBudget: number }> {
   const plan = folderPlan(store, projectId, dir, opts.model);
-  let explained = 0, calls = 0;
+  const budget = store.projectSettings(projectId).maxTokensPerRun;
+  let explained = 0, calls = 0, files = 0;
   let tokens: TokenUsage | null = null;
+  const spent = () => (tokens ? tokens.prompt + tokens.output : 0);
   for (const [i, f] of plan.pending.entries()) {
     if (opts.signal?.aborted) throw new StoppedError(); // between files: what is done stays done
+    // Within the run's budget: stop before a file that would likely cross it, judged by the average so far.
+    if (budget !== undefined && files && spent() + spent() / files > budget) {
+      opts.onProgress?.({ done: i, total: plan.pending.length, current: null });
+      return { files, explained, calls, tokens, leftForBudget: plan.pending.length - i };
+    }
+    files++;
     opts.onProgress?.({ done: i, total: plan.pending.length, current: f.path });
     const r = await explainFile(store, projectId, f.path, provider, { model: opts.model, signal: opts.signal, log: opts.log });
     explained += r.explained;
@@ -843,5 +851,5 @@ export async function explainFolder(store: Store, projectId: string, dir: string
     tokens = tokens ? addTokens(tokens, r.tokens) : r.tokens;
   }
   opts.onProgress?.({ done: plan.pending.length, total: plan.pending.length, current: null });
-  return { files: plan.pending.length, explained, calls, tokens };
+  return { files, explained, calls, tokens, leftForBudget: 0 };
 }

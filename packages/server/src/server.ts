@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, lastHeartbeat, liveRecorder, Recorder, type RecorderOptions } from "@dena/adapters";
-import { exportGuideHtml, tutorialPlan, writeTutorial, episodeChapters, howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
+import { exportGuideHtml, tutorialPlan, writeTutorial, episodeChapters, howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, explainFolder, folderPlan, inFolder, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
   estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
@@ -75,6 +75,8 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
   const recorders = new Map<string, Recorder>();
   /** Generations in progress, each with the control that stops it (the Stop button). */
   const inFlight = new Map<string, AbortController>();
+  /** How far a whole-folder code explanation has got, for the page to show while it runs. */
+  const folderProgress = new Map<string, { done: number; total: number; current: string | null }>();
   const stopped = (e: unknown) => e instanceof StoppedError;
 
   // Background updates: one runner per project; retries are scheduled, and queued work resumes after a restart.
@@ -289,6 +291,36 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     if (sub[0] === "code") {
       const settings = store.projectSettings(p.id);
       if (sub.length === 1 && method === "GET") return { files: codeOverview(store, p.id), settings: { model: settings.model ?? null } };
+      if (sub[1] === "folder" || sub[1] === "explain-folder" || (sub[1] === "stop" && body?.folder)) {
+        const dir = String((method === "GET" ? url.searchParams.get("dir") : body?.dir ?? body?.folder) ?? "");
+        if (!dir || !codeOverview(store, p.id).some((f) => inFolder(f.path, dir))) throw new HttpError(404, "No such folder");
+        const flight = `${p.id}:code-folder:${dir}`;
+        const model = (method === "GET" ? url.searchParams.get("model") : body?.model) || undefined;
+        if (model !== undefined && (typeof model !== "string" || !MODEL_NAME.test(model))) throw new HttpError(400, "Invalid model name");
+        if (sub[1] === "folder" && method === "GET") return { plan: folderPlan(store, p.id, dir, model), progress: folderProgress.get(flight) ?? null, settings: { model: settings.model ?? null } };
+        if (sub[1] === "stop" && method === "POST") {
+          const c = inFlight.get(flight);
+          c?.abort();
+          return { stopping: !!c };
+        }
+        if (sub[1] === "explain-folder" && method === "POST") {
+          if (inFlight.has(flight)) throw new HttpError(409, "This folder is already being explained");
+          const controller = new AbortController();
+          inFlight.set(flight, controller);
+          try {
+            return await explainFolder(store, p.id, dir, getProvider(p.id), { model, signal: controller.signal, log: (m) => log(`[${p.name}] code ${m}`),
+              onProgress: (pr) => folderProgress.set(flight, pr) });
+          } catch (e) {
+            if (stopped(e)) throw new HttpError(409, "Stopped. Files explained before you stopped are kept.");
+            const msg = (e as Error).message;
+            log(`[${p.name}] code folder ${dir} failed: ${msg}`);
+            throw new HttpError(502, /^(Claude Code|Claude is|Your Anthropic|No valid API key)/.test(msg) ? msg : "The model call failed. Check Claude Code's sign-in, then try again.");
+          } finally {
+            inFlight.delete(flight);
+            folderProgress.delete(flight);
+          }
+        }
+      }
       const file = String((method === "GET" ? url.searchParams.get("path") : body?.path) ?? "");
       const flight = `${p.id}:code:${file}`;
       const page = () => {

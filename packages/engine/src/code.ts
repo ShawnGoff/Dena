@@ -4,7 +4,7 @@ import path from "node:path";
 import ts from "typescript";
 import { z } from "zod";
 import { DEFAULT_EXCLUDED_DIRS, isSensitivePath, likelyAuthors, redactText, sha256, type StoredEvent, type Store } from "@dena/core";
-import { addTokens, type Provider, type TokenUsage } from "./provider.ts";
+import { addTokens, StoppedError, type Provider, type TokenUsage } from "./provider.ts";
 import { estimateTokens, type TokenEstimate } from "./tokens.ts";
 
 /**
@@ -564,7 +564,19 @@ function estimateCode(store: Store, model: string, plan: Plan): TokenEstimate {
     .prepare(`SELECT SUM(output_tokens) o, SUM(symbols + ${FILE_PAGE_UNITS} * with_file_page) u FROM code_call WHERE output_tokens > 0 AND attempts = 1 AND (requested_model = @m OR model = @m)`)
     .get({ m: model }) as { o: number | null; u: number | null };
   const perUnit = h.o && h.u ? h.o / h.u : DEFAULT_OUTPUT_PER_UNIT;
-  return estimateTokens(store, model, chars, calls, "code", (perUnit * (plan.symbols.length + (plan.fileDoc ? FILE_PAGE_UNITS : 0))) / calls);
+  const output = perUnit * (plan.symbols.length + (plan.fileDoc ? FILE_PAGE_UNITS : 0));
+  // Prompt tokens per character sent, from this user's own recent code calls. Steps and pages send
+  // differently shaped prompts, so borrowing their fit over-estimated code by nearly half again.
+  const recent = store.db
+    .prepare(`SELECT input_chars c, prompt_tokens p FROM code_call WHERE prompt_tokens > 0 AND input_chars > 0 AND attempts = 1 AND (requested_model = @m OR model = @m) ORDER BY id DESC LIMIT 15`)
+    .all({ m: model }) as { c: number; p: number }[];
+  if (recent.length >= 3) {
+    const perChar = recent.reduce((n, r) => n + r.p, 0) / recent.reduce((n, r) => n + r.c, 0);
+    const expected = Math.round(chars * perChar + output);
+    return { promptTokens: Math.round(chars * perChar), outputTokens: Math.round(output), low: expected, high: Math.round(expected * 1.5), calibrated: true,
+      basis: `calibrated on ${recent.length} of your code explanations with ${model || "your default model"}; the high end allows for retries` };
+  }
+  return estimateTokens(store, model, chars, calls, "code", output / calls);
 }
 
 // ---- generation ----
@@ -770,4 +782,66 @@ export function renderCodeMarkdown(page: CodePage): string {
   if (!page.history.entries.length) out.push("*No captured activity touched this file.*");
   else out.push(...page.history.entries.map((e) => `- \`${e.at.slice(0, 16).replace("T", " ")}\` ${e.text}${e.detail ? ` *(${e.detail})*` : ""}`));
   return out.join("\n");
+}
+
+// ---- whole folders ----
+
+/** Files directly in a folder or below it; "(project root)" means files at the top level only. */
+export const inFolder = (file: string, dir: string) => (dir === "(project root)" ? !file.includes("/") : file.startsWith(`${dir}/`));
+
+export interface FolderPlan {
+  dir: string;
+  files: number;
+  /** Files with new or changed parts, or an outdated page: the ones explaining the folder would send. */
+  pending: { path: string; symbols: number; fileDoc: boolean; calls: number }[];
+  symbols: number;
+  calls: number;
+  /** The whole folder's estimate: the sum of each file's. */
+  estimate: { low: number; high: number; calibrated: boolean; basis: string } | null;
+}
+
+/** What explaining every file in a folder would send, and its estimate, before anything runs. */
+export function folderPlan(store: Store, projectId: string, dir: string, model?: string): FolderPlan {
+  const m = model ?? store.projectSettings(projectId).model ?? "";
+  const files = listCodeFiles(store, projectId).filter((f) => inFolder(f.path, dir));
+  const pending: FolderPlan["pending"] = [];
+  let low = 0, high = 0, calibrated = true, basis = "";
+  for (const f of files) {
+    let text: string;
+    try {
+      text = fs.readFileSync(path.join(store.getProject(projectId)!.rootPath, f.path), "utf8");
+    } catch {
+      continue;
+    }
+    const symbols = splitSymbols(f.path, text);
+    const plan = planCalls(symbols, latestSymbolDocs(store, projectId, f.path), latestFileDoc(store, projectId, f.path)?.outlineHash ?? null, false);
+    if (!plan.batches.length) continue;
+    const e = estimateCode(store, m, plan);
+    low += e.low;
+    high += e.high;
+    calibrated &&= e.calibrated;
+    basis = e.basis;
+    pending.push({ path: f.path, symbols: plan.symbols.length, fileDoc: plan.fileDoc, calls: plan.batches.length });
+  }
+  return { dir, files: files.length, pending, symbols: pending.reduce((n, p) => n + p.symbols, 0), calls: pending.reduce((n, p) => n + p.calls, 0),
+    estimate: pending.length ? { low, high, calibrated, basis } : null };
+}
+
+/** Explains every file in a folder that needs it, one file at a time; stops between files when asked. */
+export async function explainFolder(store: Store, projectId: string, dir: string, provider: Provider,
+  opts: { model?: string; signal?: AbortSignal; log?: (m: string) => void; onProgress?: (p: { done: number; total: number; current: string | null }) => void } = {}):
+  Promise<{ files: number; explained: number; calls: number; tokens: TokenUsage | null }> {
+  const plan = folderPlan(store, projectId, dir, opts.model);
+  let explained = 0, calls = 0;
+  let tokens: TokenUsage | null = null;
+  for (const [i, f] of plan.pending.entries()) {
+    if (opts.signal?.aborted) throw new StoppedError(); // between files: what is done stays done
+    opts.onProgress?.({ done: i, total: plan.pending.length, current: f.path });
+    const r = await explainFile(store, projectId, f.path, provider, { model: opts.model, signal: opts.signal, log: opts.log });
+    explained += r.explained;
+    calls += r.calls;
+    tokens = tokens ? addTokens(tokens, r.tokens) : r.tokens;
+  }
+  opts.onProgress?.({ done: plan.pending.length, total: plan.pending.length, current: null });
+  return { files: plan.pending.length, explained, calls, tokens };
 }

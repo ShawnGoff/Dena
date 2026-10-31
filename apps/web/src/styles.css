@@ -392,3 +392,16 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .modal-actions { margin-top: 14px; flex-wrap: wrap; gap: 8px; }
 .rec-note { max-width: 340px; line-height: 1.35; }
+
+/* Adding projects */
+.add-project { color: var(--text-dim); font-size: 13px; margin-top: 4px; }
+.add-project:hover { color: var(--accent); }
+.suggest { margin-top: 12px; }
+.suggest-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 5px 8px; font-size: 13px; }
+.suggest-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest-name small { display: block; color: var(--text-faint); font-size: 11px; }
+.field { display: grid; gap: 4px; margin: 10px 0; }
+.field input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--bg-sunken); color: var(--text); font: inherit; }
+.field input:focus { outline: none; border-color: var(--accent); }
+.suggest-actions { display: flex; gap: 8px; flex: none; white-space: nowrap; }
+.suggest-name { flex: 1; }

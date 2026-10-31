@@ -386,3 +386,45 @@ describe("explaining the remaining steps", () => {
     fs.rmSync(h, { recursive: true, force: true });
   });
 });
+
+describe("adding projects", () => {
+  it("suggests folders used with Claude Code, can forget one, and adds a folder with its past", async () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), "dena-add-"));
+    const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), "dena-claudehome-"));
+    const work = fs.realpathSync(fs.mkdtempSync(path.join(os.homedir(), ".dena-test-work-"))); // under home, so it counts as a work folder
+    const other = fs.realpathSync(fs.mkdtempSync(path.join(os.homedir(), ".dena-test-other-")));
+    for (const [dir, cwd] of [["a", work], ["b", other]] as [string, string][]) {
+      fs.mkdirSync(path.join(claudeHome, "projects", dir), { recursive: true });
+      fs.writeFileSync(path.join(claudeHome, "projects", dir, "s.jsonl"), JSON.stringify({ type: "user", cwd }) + "\n");
+    }
+    const s = new Store(h);
+    const srv2 = await startServer(s, { port: 0, webDir: web, provider: fake, recorder: { claudeHome } });
+    const call = (pathname: string, method = "GET", body?: unknown) => new Promise<any>((resolve) => {
+      const data = body === undefined ? undefined : JSON.stringify(body);
+      const r = http.request({ host: "127.0.0.1", port: srv2.port, path: pathname, method,
+        headers: { host: `127.0.0.1:${srv2.port}`, "x-dena-token": srv2.token, ...(data ? { "content-type": "application/json", "content-length": Buffer.byteLength(data) } : {}) } }, (res) => {
+        let t = "";
+        res.on("data", (c) => (t += c));
+        res.on("end", () => resolve({ status: res.statusCode, json: JSON.parse(t) }));
+      });
+      r.end(data);
+    });
+    try {
+      const found = (await call("/api/discover")).json.folders.map((f: any) => f.path).sort();
+      expect(found).toEqual([work, other].sort());
+      expect((await call("/api/discover/dismiss", "POST", { path: other })).json.folders.map((f: any) => f.path)).toEqual([work]);
+      expect((await call("/api/projects", "POST", { path: "/private/tmp" })).status).toBe(400);
+      expect((await call("/api/projects", "POST", { path: path.join(work, "missing") })).status).toBe(400);
+      const added = await call("/api/projects", "POST", { path: work.replace(os.homedir(), "~"), name: "Work" });
+      expect(added.status).toBe(200);
+      expect(added.json.project).toMatchObject({ name: "Work", rootPath: work });
+      expect(added.json.transcriptsKeptDays).toBeGreaterThan(0);
+      expect((await call("/api/discover")).json.folders).toEqual([]); // covered now, and the other was dismissed
+      expect((await call("/api/projects", "POST", { path: work })).status).toBe(409);
+    } finally {
+      await srv2.close();
+      s.close();
+      for (const d of [h, claudeHome, work, other]) fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+});

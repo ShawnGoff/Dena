@@ -4,7 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
-import { git, hookInstall, lastHeartbeat, liveRecorder, Recorder, type RecorderOptions } from "@dena/adapters";
+import { git, hookInstall, lastHeartbeat, liveRecorder, pausedWindows, Recorder, type RecorderOptions } from "@dena/adapters";
 import { exportGuideHtml, tutorialPlan, writeTutorial, episodeChapters, howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, explainFolder, folderPlan, inFolder, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
@@ -130,6 +130,14 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
   // starting at login, and spending usage nobody asked for today is not acceptable. The Overview
   // asks whether to continue them.
   const resumable = new Set(store.listProjects().filter((p) => store.db.prepare("SELECT 1 FROM update_job WHERE project_id = ? AND status = 'queued'").get(p.id)).map((p) => p.id));
+  /** What the last start recovered from while Dena was off (counted, never written by a model). */
+  const catchUp = (projectId: string) => {
+    try {
+      return JSON.parse(store.getCursor(projectId, "dena", "last_catch_up") ?? "null");
+    } catch {
+      return null;
+    }
+  };
   /** A provider per call, so each project's sign-in setting applies. */
   const getProvider = (projectId: string): Provider => {
     if (opts.provider) return opts.provider;
@@ -178,6 +186,8 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         gaps: store.gaps(p.id),
         recent: compactAll(store, p.id, store.eventsById(p.id, recent.map((r) => r.id)).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))),
         authors: authorSummary(store, p.id),
+        catchUp: catchUp(p.id),
+        pausedWindows: pausedWindows(store, p.id).length,
         episodes: { total: episodes.length, explained, latest: episodes.slice(-5).reverse() },
       };
     }
@@ -603,7 +613,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
           await running.stop();
         }
       } else throw new HttpError(400, "action must be start, pause, resume or stop");
-      return { state: store.getProject(p.id)!.recordingState, ...recorderState(p.id) };
+      return { state: store.getProject(p.id)!.recordingState, ...recorderState(p.id), catchUp: action === "start" ? catchUp(p.id) : null };
     }
 
     throw new HttpError(404, "Not found");

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, hasToken, type Project } from "./api";
+import { api, catchUpText, hasToken, type CatchUp, type Project } from "./api";
 import { EvidencePanel } from "./components/EvidencePanel";
 import { Overview } from "./views/Overview";
 import { Search } from "./views/Search";
@@ -121,11 +121,21 @@ export function App() {
 function Recording({ project, onChange }: { project: Project; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!note) return;
+    const t = setTimeout(() => setNote(null), 15_000);
+    return () => clearTimeout(t);
+  }, [note]);
   const act = async (action: string) => {
     setBusy(true);
     setErr(null);
     try {
-      await api(`projects/${project.id}/recording`, { method: "POST", body: { action } });
+      const r = await api<{ catchUp: CatchUp | null }>(`projects/${project.id}/recording`, { method: "POST", body: { action } });
+      const recent = r.catchUp && Date.now() - Date.parse(r.catchUp.at) < 60_000 ? catchUpText(r.catchUp) : null;
+      setNote(action === "start" ? (recent ? `Caught up on what happened while Dena was off: ${recent}.` : null)
+        : action === "pause" ? "Paused. Nothing is captured, and this time stays out of the guide."
+        : action === "resume" ? "Recording again. The paused time is left out." : null);
       onChange();
     } catch (e) {
       setErr((e as Error).message);
@@ -143,13 +153,14 @@ function Recording({ project, onChange }: { project: Project; onChange: () => vo
     <div className="rec">
       <span className={`pill ${leftOn ? "stopped" : s}`} title={elsewhere ? `Recording in another Dena process (pid ${project.recorderElsewherePid})` : undefined}>
         <span className="dot" />
-        {leftOn ? "Not recording (was left on)" : s === "recording" ? `Recording${elsewhere ? " in another window" : ""}` : s === "paused" ? "Paused — nothing is captured" : "Not recording"}
+        {leftOn ? "Not recording (was left on)" : s === "recording" ? `Recording${elsewhere ? " in another window" : ""}` : s === "paused" ? "Paused — kept out of the guide" : "Not recording"}
       </span>
       {(s === "stopped" || leftOn) && <button className="btn primary" disabled={busy} onClick={() => act("start")}>{leftOn ? "Resume recording" : "Start recording"}</button>}
       {s === "recording" && !leftOn && <button className="btn" disabled={busy} onClick={() => act("pause")}>Pause</button>}
       {s === "paused" && !leftOn && <button className="btn" disabled={busy} onClick={() => act("resume")}>Resume</button>}
       {s !== "stopped" && !leftOn && !elsewhere && <button className="btn danger" disabled={busy} onClick={() => act("stop")}>Stop</button>}
       {err && <span className="badge bad">{err}</span>}
+      {note && <span className="rec-note faint small" role="status">{note}</span>}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Overview as O } from "../api";
+import { api, catchUpText, type Overview as O } from "../api";
 import { Badge, EventRow, Loading } from "../components/Bits";
 import { SOURCE_LABEL, when } from "../format";
 import { GuideUpdates } from "../components/GuideUpdates";
@@ -44,6 +44,13 @@ export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId
             detail={o.sources.hooksProject || o.sources.hooksUser ? `Installed (${o.sources.hooksProject ? "this folder" : "all sessions"}): exit codes, timings, agent notes${live ? "" : ". Hook data waits and is imported when recording runs"}` : "Not installed — run: dena hooks install"} />
           <Source status={!o.sources.git ? "off" : live ? "live" : "ready"} label="Git" detail={o.sources.git ? "Commits, diffs, branch switches" : "This folder is not a git repository"} />
           <Source status={live ? "live" : "off"} label="File watcher" detail={live ? "Watching for changes" : "Runs while recording; changes made meanwhile are found on the next start"} />
+          {catchUpText(o.catchUp) && (
+            <p className="faint" style={{ fontSize: 12.5 }}>
+              When recording last started ({when(o.catchUp!.at)}), Dena caught up on what happened while it was off: {catchUpText(o.catchUp)}.
+              File changes made outside Claude Code in that time have no exact times.
+            </p>
+          )}
+          {o.pausedWindows > 0 && <p className="faint" style={{ fontSize: 12.5 }}>Recording was paused {o.pausedWindows} {o.pausedWindows === 1 ? "time" : "times"}; what happened then is left out of the guide, as you asked.</p>}
           {!live && <p className="faint" style={{ fontSize: 12.5 }}>Nothing is being captured right now{o.project.recordingState !== "stopped" ? ", although recording was left on. Use Start recording above to resume" : ". Use Start recording above"}.</p>}
           {o.authors.unknown > 0 && (
             <p className="faint" style={{ fontSize: 12.5, marginBottom: 0 }}>

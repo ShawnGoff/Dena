@@ -44,6 +44,8 @@ export interface ProjectSettings {
   auth?: "account" | "api-key";
   /** Optional ceiling on estimated spend for one batch run, in USD as reported by Claude Code. */
   maxUsdPerRun?: number;
+  /** The sidebar folder this project is grouped under, if any. */
+  folder?: string;
   /** Most tokens one batch run may use (explaining many steps, a folder, the update queue); the rest waits for the next run. */
   maxTokensPerRun?: number;
 }
@@ -134,6 +136,10 @@ export class Store {
     this.db.transaction(() => {
       this.db.prepare("UPDATE maintenance SET allow_delete = 1 WHERE id = 1").run();
       this.db.prepare("DELETE FROM event_fts WHERE project_id = ?").run(projectId);
+      // Tables that point at the project without ON DELETE CASCADE (the code-explainer tables of
+      // migration 13): cleared first, or the project row could not be removed.
+      for (const t of ["code_symbol_doc", "code_file_doc", "code_call"])
+        if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t)) this.db.prepare(`DELETE FROM ${t} WHERE project_id = ?`).run(projectId);
       this.db.prepare("DELETE FROM project WHERE id = ?").run(projectId);
       this.db.prepare("UPDATE maintenance SET allow_delete = 0 WHERE id = 1").run();
     })();

@@ -9,6 +9,7 @@ import { Memory } from "./views/Memory";
 import { Wiki } from "./views/Wiki";
 import { Activity } from "./views/Activity";
 import { ProjectAdder } from "./components/AddProject";
+import { ProjectList } from "./components/ProjectList";
 import { Code } from "./views/Code";
 
 type View = "overview" | "wiki" | "code" | "activity" | "timeline" | "guide" | "memory" | "search";
@@ -66,16 +67,8 @@ export function App() {
       <nav className="sidebar" aria-label="Projects">
         <div className="brand" title="Dena: Development Explained, Not Assumed"><b>Dena</b><span>Development Explained,<br />Not Assumed</span></div>
         <div>
-          <div className="side-label">Projects</div>
-          {projects.map((p) => (
-            <button key={p.id} className={`side-item ${p.id === project?.id ? "active" : ""}`} onClick={() => go({ p: p.id, ev: null, ep: null })}>
-              <span className={`dot`} style={{ background: p.recordingState === "recording" ? "var(--rec)" : p.recordingState === "paused" ? "var(--warn)" : "var(--line-strong)" }} />
-              <span style={{ minWidth: 0 }}>
-                {p.name}
-                <small title={p.rootPath}>{p.rootPath}</small>
-              </span>
-            </button>
-          ))}
+          <ProjectList projects={projects} currentId={project?.id ?? null} onSelect={(id) => go({ p: id, ev: null, ep: null })}
+            onChanged={(removedId) => { loadProjects(); if (removedId && removedId === project?.id) go({ p: null, v: "overview", ev: null, ep: null, page: null }); }} />
           {projects.length === 0 && <p className="faint" style={{ padding: "0 8px", fontSize: 13 }}>No projects yet. Add the folder you work on with Claude Code.</p>}
           <ProjectAdder onAdded={(np) => { loadProjects(); go({ p: np.id, v: "overview", ev: null, ep: null }); }} />
         </div>

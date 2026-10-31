@@ -428,3 +428,55 @@ describe("adding projects", () => {
     }
   });
 });
+
+describe("organising projects", () => {
+  it("groups a project under a folder, and removes a project from Dena without touching its files", async () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), "dena-org-"));
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), "dena-org-work-"));
+    fs.writeFileSync(path.join(work, "keep.txt"), "mine");
+    const s = new Store(h);
+    const p = s.createProject("org", work);
+    s.ingest(p.id, { sessions: [], artifacts: [], gaps: [], links: [], events: [
+      { sessionId: null, source: "t", sourceEventId: "p1", eventType: "prompt_submitted", occurredAt: "2026-10-01T10:00:00Z", actor: "user", summary: "x", payload: {}, captureConfidence: "observed" },
+    ] });
+    s.db.prepare("INSERT INTO code_call (project_id, file, symbols, with_file_page, attempts, input_chars, created_at) VALUES (?, 'a.ts', 1, 0, 1, 10, ?)").run(p.id, new Date().toISOString());
+    const srv2 = await startServer(s, { port: 0, webDir: web, provider: fake });
+    const call = (pathname: string, method = "GET", body?: unknown) => new Promise<any>((resolve) => {
+      const data = body === undefined ? undefined : JSON.stringify(body);
+      const r = http.request({ host: "127.0.0.1", port: srv2.port, path: pathname, method,
+        headers: { host: `127.0.0.1:${srv2.port}`, "x-dena-token": srv2.token, ...(data ? { "content-type": "application/json", "content-length": Buffer.byteLength(data) } : {}) } }, (res) => {
+        let t = "";
+        res.on("data", (c) => (t += c));
+        res.on("end", () => resolve({ status: res.statusCode, json: JSON.parse(t) }));
+      });
+      r.end(data);
+    });
+    try {
+      expect((await call(`/api/projects/${p.id}/settings`, "POST", { folder: "  Games  " })).json.folder).toBe("Games");
+      expect((await call("/api/projects")).json[0].folder).toBe("Games");
+      expect((await call(`/api/projects/${p.id}/settings`, "POST", { folder: null })).json.folder).toBeNull();
+      const r = await call(`/api/projects/${p.id}`, "DELETE");
+      expect(r.json).toMatchObject({ removed: true, folder: work });
+      expect((await call("/api/projects")).json).toEqual([]);
+      expect(fs.readFileSync(path.join(work, "keep.txt"), "utf8")).toBe("mine"); // the folder is untouched
+      expect(JSON.parse(fs.readFileSync(path.join(h, "dismissed-folders.json"), "utf8"))).toContain(work); // not suggested again
+    } finally {
+      await srv2.close();
+      s.close();
+      for (const d of [h, work]) fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("browsing for a folder", () => {
+  it("lists folders inside the home folder only", async () => {
+    const home = fs.realpathSync(os.homedir());
+    const inHome = await req("/api/browse");
+    expect(inHome.status).toBe(200);
+    expect(inHome.json.path).toBe(home);
+    expect(inHome.json.parent).toBeNull();
+    expect(inHome.json.dirs.every((d: any) => !d.name.startsWith("."))).toBe(true);
+    expect((await req(`/api/browse?path=${encodeURIComponent("/etc")}`)).status).toBe(403);
+    expect((await req(`/api/browse?path=${encodeURIComponent(home + "/../..")}`)).status).toBe(403);
+  });
+});

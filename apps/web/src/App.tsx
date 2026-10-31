@@ -64,7 +64,7 @@ export function App() {
   return (
     <div className="shell">
       <nav className="sidebar" aria-label="Projects">
-        <div className="brand"><b>Dena</b><span>how it got built</span></div>
+        <div className="brand" title="Dena: Development Explained, Not Assumed"><b>Dena</b><span>Development Explained,<br />Not Assumed</span></div>
         <div>
           <div className="side-label">Projects</div>
           {projects.map((p) => (

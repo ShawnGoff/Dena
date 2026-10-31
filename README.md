@@ -1,6 +1,8 @@
 # Dena
 
-**Understand how things get built.** Dena records the work you do with an AI coding assistant
+**Development Explained, Not Assumed.**
+
+Understand how things get built. Dena records the work you do with an AI coding assistant
 (Claude Code) and turns it into a guide people can learn from: step-by-step instructions for each
 piece of work, pages that explain the project and its code, and a plain record of what the AI did.
 

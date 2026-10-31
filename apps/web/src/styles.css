@@ -47,9 +47,9 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
   gap: 18px;
   overflow-y: auto;
 }
-.brand { display: flex; align-items: baseline; gap: 8px; padding: 0 8px; }
+.brand { display: grid; gap: 2px; padding: 0 8px; }
 .brand b { font-size: 18px; letter-spacing: -0.02em; }
-.brand span { color: var(--text-faint); font-size: 12px; }
+.brand span { color: var(--text-faint); font-size: 11.5px; line-height: 1.35; }
 .side-label { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; padding: 0 8px; margin-bottom: 4px; }
 .side-item {
   display: flex; align-items: center; gap: 10px; width: 100%;

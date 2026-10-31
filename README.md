@@ -103,14 +103,22 @@ Dena only calls a model when you ask it to write something, and it shows an esti
   cheapest and works well. If you don't choose, Dena uses your Claude Code default model. A
   different model can be used for a single run with *change for this run*.
 - **Depth**: *Concise* (the default) writes shorter steps with far fewer tokens than *Thorough*.
-- Steps that changed nothing (a question, "yes, go ahead") are summarised without a model.
+- Steps that changed nothing (a question, "yes, go ahead") and steps that only saved work in git
+  ("commit, merge, push") are written from the facts, without a model.
+- **Budget per run** (in the same settings box, or `dena config <project> max-tokens 100k`): a run
+  that explains many steps or a folder, or works through the update queue, stops at that many
+  tokens; the next run carries on where it stopped. Use it to spread a big job over several days.
+- Updates still waiting when Dena stopped never resume on their own; Overview asks first.
+- Dena sends the model only what a step can teach from: the changed lines of each diff (not the
+  surrounding code), commands that did something (commands that only looked around become one
+  line), and the most useful evidence first when an episode is large.
 - Updates are targeted: only the statements whose evidence changed are sent again.
 - Writing the whole-project tutorial, or explaining a whole folder of code (*Explain folder…* in
   the Code tab), covers a lot at once, so it always asks first and shows the estimate.
 - Every call's real token use is recorded. Estimates are ranges learned from your recent calls.
 
-As a rough guide on Haiku: a concise step takes about 8k tokens, a wiki page about 14k, and a code
-file of a few hundred lines about 8k.
+As a rough guide on Haiku: a concise step takes about 5–10k tokens, a wiki page about 14k, and a
+code file of a few hundred lines about 8k.
 
 ## Privacy and safety
 

@@ -59,7 +59,8 @@ const USAGE = `dena <command>
   service status|install|uninstall [--port N] [--yes]
                                  keep Dena running in the background on macOS (a login item); shows the change first
   config <project> [key value]   show or set: model (e.g. haiku, sonnet; "default" = your Claude Code default),
-                                 depth (concise|thorough), max-usd (per batch run; "none" to clear),
+                                 depth (concise|thorough), max-tokens (per batch run, e.g. 100k; "none" to clear),
+                                 max-usd (per batch run; "none" to clear),
                                  auth (account = your Claude subscription, the default; api-key = billed API credits)
   timeline <project> [--session S] [--all]
                                  activity grouped by prompt
@@ -288,7 +289,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
   ${est.modelCalls} model call${est.modelCalls === 1 ? "" : "s"} for the rest (small episodes share calls), ~${Math.round(est.inputChars / 1000)}k characters of evidence
   model: ${o.model ?? s.model ?? "your Claude Code default"} · depth: ${o.depth ?? s.depth}
   estimated tokens: ${formatTokens(est.tokensLow)}–${formatTokens(est.tokensHigh)} in total (fewer if no repairs are needed; ${est.tokenBasis})
-  API-equivalent: ${est.estimatedUsd !== null ? `~$${est.estimatedUsd.toFixed(2)} (${est.basis})` : est.basis}${maxUsd !== undefined ? `\n  cap: stops before exceeding $${maxUsd}` : ""}`);
+  API-equivalent: ${est.estimatedUsd !== null ? `~$${est.estimatedUsd.toFixed(2)} (${est.basis})` : est.basis}${maxUsd !== undefined ? `\n  cap: stops before exceeding $${maxUsd}` : ""}${s.maxTokensPerRun ? `\n  budget: stops at about ${formatTokens(s.maxTokensPerRun)} tokens this run; run it again later to continue where it stopped` : ""}`);
         if (!est.modelCalls) {
           if (est.factsOnly) await explainMany(store, p.id, ids, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account", effort: flag("effort") ?? store.projectSettings(p.id).effort }), o);
           console.log("Nothing needs a model.");
@@ -301,8 +302,8 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         const r = await explainMany(store, p.id, ids, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account", effort: flag("effort") ?? store.projectSettings(p.id).effort }), { ...o, maxUsd, log: (m) => console.error(`· ${m}`),
           onProgress: (x) => !x.cached && console.error(`  ✓ ${x.unitId} ${x.step.generatedBy === "facts" ? "(facts)" : x.batched ? "(shared call)" : ""}${x.validation.ok ? "" : " ⚠ problems remain"}`) });
         const repairs = r.explained.filter((x) => !x.cached && x.attempts > 1).length;
-        console.log(`\nDone: ${r.explained.length} episodes, ${r.calls} model calls, $${r.spentUsd.toFixed(2)} reported, ${repairs} needed a repair`
-          + `${r.skippedForBudget.length ? `, ${r.skippedForBudget.length} skipped to stay under the cap` : ""}.`);
+        console.log(`\nDone: ${r.explained.length} episodes, ${r.calls} model calls, ${formatTokens(r.spentTokens)} tokens, ${repairs} needed a repair`
+          + `${r.skippedForBudget.length ? `, ${r.skippedForBudget.length} left for the next run to stay within the budget` : ""}.`);
         break;
       }
       case "memory": {
@@ -477,11 +478,16 @@ Projects you left recording carry on recording. Remove it any time with \`dena s
             if (value !== "account" && value !== "api-key") throw new Error("auth is account (your Claude subscription) or api-key (billed API credits)");
             store.updateProjectSettings(p.id, { auth: value });
           } else if (key === "max-usd") store.updateProjectSettings(p.id, { maxUsdPerRun: value === "none" ? undefined : Number(value) });
+          else if (key === "max-tokens") {
+            const n = Number(String(value).replace(/k$/i, "000"));
+            if (value !== "none" && !(n >= 5_000)) throw new Error("max-tokens is a number of tokens (at least 5000, or e.g. 100k), or none");
+            store.updateProjectSettings(p.id, { maxTokensPerRun: value === "none" ? undefined : n });
+          }
           else throw new Error(`Unknown setting "${key}"`);
         }
         const s = store.projectSettings(p.id);
         const st = claudeAuthStatus(s.auth ?? "account");
-        console.log(`auth:    ${s.auth ?? "account"} — ${st.detail}\nmodel:   ${s.model ?? "(your Claude Code default)"}\ndepth:   ${s.depth}\nmax-usd: ${s.maxUsdPerRun ?? "(no cap)"}\nexclude: ${s.exclude.join(", ") || "(defaults only)"}`);
+        console.log(`auth:    ${s.auth ?? "account"} — ${st.detail}\nmodel:   ${s.model ?? "(your Claude Code default)"}\ndepth:   ${s.depth}\nmax-usd: ${s.maxUsdPerRun ?? "(no cap)"}\nmax-tokens: ${s.maxTokensPerRun ?? "(no budget per run)"}\nexclude: ${s.exclude.join(", ") || "(defaults only)"}`);
         break;
       }
       case "gaps": {

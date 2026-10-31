@@ -6,11 +6,14 @@ import type { Claim, Step } from "./schema.ts";
  * nothing. A model only adds the narrative and teaching around them.
  */
 
-const MODEL_WORTHY: EvidenceItem["kind"][] = ["file_change", "commit", "test", "command", "error", "agent_note"];
+const MODEL_WORTHY: EvidenceItem["kind"][] = ["file_change", "test", "command", "error", "agent_note"];
 
-/** Episodes with no changes, commands or tests (questions, discussion) need no model call. */
+/**
+ * Episodes with nothing to teach need no model call: questions and discussion, and work that only
+ * saved or moved code in git ("commit, merge, push"), which Dena states from the facts.
+ */
 export function needsModel(packet: Packet): boolean {
-  return packet.items.some((i) => MODEL_WORTHY.includes(i.kind));
+  return packet.items.some((i) => MODEL_WORTHY.includes(i.kind) && !(i.kind === "command" && i.facts.versionControl));
 }
 
 export function whatChangedFromFacts(packet: Packet): Claim[] {
@@ -57,9 +60,12 @@ export function factsOnlyStep(packet: Packet, title: string): Step {
   if (reads) happened.push({ kind: "observed", evidence: [reads.ref], text: reads.text.split(":")[0]! + "." });
   const last = replies[replies.length - 1];
   if (last) happened.push({ kind: "observed", evidence: [last.ref], text: `The AI replied: "${gist(last.text)}"` });
+  const commits = packet.items.filter((i) => i.kind === "commit");
   return {
     title,
-    summary: "A conversation with no changes to the project. Dena summarised it from the captured messages without using a model.",
+    summary: commits.length
+      ? `Saving the work in git: ${commits.length} commit${commits.length === 1 ? "" : "s"}, with no other changes. Dena summarised it from the captured facts without using a model.`
+      : "A conversation with no changes to the project. Dena summarised it from the captured messages without using a model.",
     goal: "", prerequisites: [], instructions: [], check: [], pitfalls: [], // nothing was built, so there is nothing to follow
     whatHappened: happened,
     whyItMattered: [],
@@ -67,7 +73,7 @@ export function factsOnlyStep(packet: Packet, title: string): Step {
     decisions: [],
     concepts: [],
     uncertainty: packet.items.filter((i) => i.kind === "gap").map((g) => g.text.replace(/^KNOWN GAP IN CAPTURE: /, "")),
-    whatChanged: [],
+    whatChanged: commits.length ? whatChangedFromFacts(packet) : [],
     verification: [],
     generatedBy: "facts",
   };

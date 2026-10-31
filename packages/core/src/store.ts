@@ -44,6 +44,8 @@ export interface ProjectSettings {
   auth?: "account" | "api-key";
   /** Optional ceiling on estimated spend for one batch run, in USD as reported by Claude Code. */
   maxUsdPerRun?: number;
+  /** Most tokens one batch run may use (explaining many steps, a folder, the update queue); the rest waits for the next run. */
+  maxTokensPerRun?: number;
 }
 
 export interface IngestBatch {

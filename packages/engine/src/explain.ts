@@ -37,7 +37,7 @@ export interface ExplainOptions {
 /** Settings resolved from the project, overridable per run. */
 function resolve(store: Store, projectId: string, opts: ExplainOptions) {
   const s = store.projectSettings(projectId);
-  return { model: opts.model ?? s.model ?? "", depth: opts.depth ?? s.depth ?? "thorough", maxUsd: s.maxUsdPerRun };
+  return { model: opts.model ?? s.model ?? "", depth: opts.depth ?? s.depth ?? "thorough", maxUsd: s.maxUsdPerRun, maxTokens: s.maxTokensPerRun };
 }
 
 export function evidenceMap(packet: Packet): Explanation["evidence"] {
@@ -226,10 +226,15 @@ export function estimate(store: Store, projectId: string, unitIds: string[], opt
 
 export interface BatchResult {
   explained: Explanation[];
+  /** Left for the next run, to stay within the run's budget. */
   skippedForBudget: string[];
   spentUsd: number;
+  /** Tokens this run used (sent and written), as reported. */
+  spentTokens: number;
   calls: number;
 }
+
+const used = (t: TokenUsage | null | undefined) => (t ? t.prompt + t.output : 0);
 
 /**
  * Explains many episodes with as few calls as possible: cached and facts-only episodes cost
@@ -241,21 +246,24 @@ export async function explainMany(
   projectId: string,
   unitIds: string[],
   provider: Provider,
-  opts: ExplainOptions & { maxUsd?: number; onProgress?: (x: Explanation) => void } = {},
+  opts: ExplainOptions & { maxUsd?: number; maxTokens?: number; onProgress?: (x: Explanation) => void } = {},
 ): Promise<BatchResult> {
   const log = opts.log ?? (() => {});
-  const { model, depth, maxUsd: settingMax } = resolve(store, projectId, opts);
+  const { model, depth, maxUsd: settingMax, maxTokens: settingTokens } = resolve(store, projectId, opts);
   const maxUsd = opts.maxUsd ?? settingMax;
+  const maxTokens = opts.maxTokens ?? settingTokens;
   const project = store.getProject(projectId)!;
   const titles = new Map(loadEpisodes(store, projectId).map((e) => [e.id, e.title]));
-  const result: BatchResult = { explained: [], skippedForBudget: [], spentUsd: 0, calls: 0 };
+  const result: BatchResult = { explained: [], skippedForBudget: [], spentUsd: 0, spentTokens: 0, calls: 0 };
   const done = (x: Explanation) => {
     result.explained.push(x);
     opts.onProgress?.(x);
   };
   const avgCall = () => (result.calls ? result.spentUsd / result.calls : 0);
-  // Stop once the cap is reached, or when the next call would likely cross it (judged by this run's average call).
-  const overBudget = () => maxUsd !== undefined && (result.spentUsd >= maxUsd || result.spentUsd + avgCall() > maxUsd);
+  const avgTokens = () => (result.calls ? result.spentTokens / result.calls : 0);
+  // Stop once a cap is reached, or when the next call would likely cross it (judged by this run's average call).
+  const overBudget = () => (maxUsd !== undefined && (result.spentUsd >= maxUsd || result.spentUsd + avgCall() > maxUsd))
+    || (maxTokens !== undefined && (result.spentTokens >= maxTokens || result.spentTokens + avgTokens() > maxTokens));
 
   const small: { id: string; packet: Packet }[] = [];
   const large: string[] = [];
@@ -295,8 +303,9 @@ export async function explainMany(
       large.unshift(...group.map((g) => g.id));
       continue;
     }
-    result.calls++;
+    result.calls += res.calls ?? 1;
     result.spentUsd += res.costUsd ?? 0;
+    result.spentTokens += used(res.tokens);
     const steps = ((res.json as any)?.steps ?? []) as any[];
     const share = (res.costUsd ?? 0) / group.length;
     const tokShare: TokenUsage | null = res.tokens
@@ -334,6 +343,7 @@ export async function explainMany(
     const x = await explainEpisode(store, projectId, id, provider, { ...opts, force: true });
     result.calls += x.attempts;
     result.spentUsd += x.costUsd ?? 0;
+    result.spentTokens += used(x.tokens);
     done(x);
   }
   return result;

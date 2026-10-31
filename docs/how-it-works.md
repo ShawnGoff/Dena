@@ -30,7 +30,10 @@ rebuilt from events whenever needed, so they never drift from the record.
 ## 3. Writing a step
 
 To explain an episode, Dena builds an **evidence packet**: a bounded, redacted view of that
-episode's events, each item numbered (E1, E2, …). The model is asked to write a step as
+episode's events, each item numbered (E1, E2, …). It is built to be lean: diffs are reduced to the
+lines that changed, commands that only looked around fold into one line, a commit's diff is not
+repeated when the same changes are already there, and when an episode is larger than the budget
+the most useful evidence (the request, results, errors, notes, then the latest changes) is kept first. The model is asked to write a step as
 **statements**, each citing the items it rests on and labelled with what kind of statement it is:
 
 | Label | Meaning |

@@ -1,4 +1,5 @@
 export * as claudeCode from "./claude-code/transcript.ts";
+export { foldersUsedWithClaude, isWorkFolder, type UsedFolder } from "./claude-code/discover.ts";
 export * as git from "./git/git.ts";
 export * as hooks from "./claude-code/hooks.ts";
 export * as hookInstall from "./claude-code/install.ts";

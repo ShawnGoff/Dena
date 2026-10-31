@@ -8,6 +8,7 @@ import { Guide } from "./views/Guide";
 import { Memory } from "./views/Memory";
 import { Wiki } from "./views/Wiki";
 import { Activity } from "./views/Activity";
+import { ProjectAdder } from "./components/AddProject";
 import { Code } from "./views/Code";
 
 type View = "overview" | "wiki" | "code" | "activity" | "timeline" | "guide" | "memory" | "search";
@@ -75,7 +76,8 @@ export function App() {
               </span>
             </button>
           ))}
-          {projects.length === 0 && <p className="faint" style={{ padding: "0 8px", fontSize: 13 }}>No projects yet. Add one with <code>dena init &lt;folder&gt;</code>.</p>}
+          {projects.length === 0 && <p className="faint" style={{ padding: "0 8px", fontSize: 13 }}>No projects yet. Add the folder you work on with Claude Code.</p>}
+          <ProjectAdder onAdded={(np) => { loadProjects(); go({ p: np.id, v: "overview", ev: null, ep: null }); }} />
         </div>
       </nav>
       {project ? (
@@ -111,7 +113,7 @@ export function App() {
           </div>
         </div>
       ) : (
-        <div className="empty" style={{ paddingTop: 120 }}><b>No projects yet</b>Register a folder with <code>dena init &lt;folder&gt;</code>, then reload.</div>
+        <div className="empty" style={{ paddingTop: 120 }}><b>No projects yet</b>Use “+ Add project” on the left to add a folder you work on with Claude Code.</div>
       )}
     </div>
   );

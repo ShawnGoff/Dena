@@ -52,11 +52,21 @@ npm link
 Keep the cloned folder where it is: the command runs Dena from there. Without `npm link`, run
 commands from the Dena folder as `npm run -s dena -- <command>` instead.
 
-Register the project you want to document (any folder you work on with Claude Code):
+Register the project you want to document (any folder you work on with Claude Code). In the app,
+use **+ Add project** on the left, or pick it from **Worked in recently**, the folders where Dena
+noticed you using Claude Code. From the command line:
 
 ```bash
 dena init ~/code/my-app
+dena import-claude my-app
+dena import-git my-app
 ```
+
+Adding a project imports its past from what is already on your computer: the conversations Claude
+Code still has, and the full git history. No AI is used. Claude Code deletes conversations after
+30 days by default, so to keep a longer history, add `"cleanupPeriodDays": 3650` to
+`~/.claude/settings.json`. Dena doesn't record new projects by itself: add a project, then press
+**Start recording** on its page.
 
 Optionally, turn on live capture from Claude Code. Dena shows exactly what it will add to the
 folder's Claude Code settings and writes nothing until you add `--yes`:

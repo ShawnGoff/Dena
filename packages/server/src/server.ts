@@ -1,10 +1,11 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
-import { git, hookInstall, lastHeartbeat, liveRecorder, pausedWindows, Recorder, type RecorderOptions } from "@dena/adapters";
+import { correlate, authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
+import { foldersUsedWithClaude, git, hookInstall, importChangedTranscripts, importGitIfChanged, isWorkFolder, lastHeartbeat, liveRecorder, pausedWindows, Recorder, type RecorderOptions } from "@dena/adapters";
 import { explainMany, stepCoverage, exportGuideHtml, tutorialPlan, writeTutorial, episodeChapters, howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, explainFolder, folderPlan, inFolder, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
@@ -132,6 +133,33 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
   // starting at login, and spending usage nobody asked for today is not acceptable. The Overview
   // asks whether to continue them.
   const resumable = new Set(store.listProjects().filter((p) => store.db.prepare("SELECT 1 FROM update_job WHERE project_id = ? AND status = 'queued'").get(p.id)).map((p) => p.id));
+  const dismissedFile = path.join(store.home, "dismissed-folders.json");
+  const dismissed = (): string[] => {
+    try {
+      return JSON.parse(fs.readFileSync(dismissedFile, "utf8"));
+    } catch {
+      return [];
+    }
+  };
+  /** Folders used with Claude Code that no project covers and you have not dismissed, newest first. */
+  const suggestions = () => {
+    const roots = store.listProjects().map((x) => x.rootPath);
+    const no = new Set(dismissed());
+    return foldersUsedWithClaude(opts.recorder?.claudeHome).filter((f) => isWorkFolder(f.path) && !no.has(f.path)
+      && !roots.some((r) => f.path === r || f.path.startsWith(`${r}/`) || r.startsWith(`${f.path}/`)) && fs.existsSync(f.path)).slice(0, 6);
+  };
+  const count = (projectId: string, what: string, where: string) =>
+    (store.db.prepare(`SELECT ${what} n FROM event WHERE project_id = ? AND ${where}`).get(projectId) as { n: number }).n;
+  /** How many days Claude Code keeps its transcripts (its cleanupPeriodDays setting; 30 by default). */
+  const transcriptRetentionDays = (): number => {
+    try {
+      const v = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".claude", "settings.json"), "utf8")).cleanupPeriodDays;
+      return typeof v === "number" && v > 0 ? v : 30;
+    } catch {
+      return 30;
+    }
+  };
+
   /** What the last start recovered from while Dena was off (counted, never written by a model). */
   const catchUp = (projectId: string) => {
     try {
@@ -168,6 +196,47 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     // /api/projects
     if (parts.length === 1 && parts[0] === "projects" && method === "GET")
       return store.listProjects().map((p) => ({ ...p, ...recorderState(p.id), stats: store.stats(p.id) }));
+
+    // Folders you worked in with Claude Code that Dena does not know yet. Read-only; nothing is recorded.
+    if (parts[0] === "discover" && parts.length === 1 && method === "GET") return { folders: suggestions() };
+    if (parts[0] === "discover" && parts[1] === "dismiss" && method === "POST") {
+      const dir = String(body?.path ?? "");
+      fs.writeFileSync(dismissedFile, JSON.stringify([...new Set([...dismissed(), dir])], null, 2));
+      return { folders: suggestions() };
+    }
+
+    // Add a project and import its past: Claude Code's transcripts and git history. No model is used.
+    if (parts.length === 1 && parts[0] === "projects" && method === "POST") {
+      const raw = String(body?.path ?? "").trim().replace(/^~(?=\/|$)/, os.homedir());
+      if (!raw || !path.isAbsolute(raw)) throw new HttpError(400, "Give the folder's full path, like ~/code/my-app");
+      let dir: string;
+      try {
+        dir = fs.realpathSync(raw);
+        if (!fs.statSync(dir).isDirectory()) throw new Error();
+      } catch {
+        throw new HttpError(400, "That folder does not exist");
+      }
+      if (!isWorkFolder(dir)) throw new HttpError(400, "That looks like a system or temporary folder, not a project");
+      const existing = store.listProjects().find((x) => x.rootPath === dir);
+      if (existing) throw new HttpError(409, `"${existing.name}" already covers that folder`);
+      const name = String(body?.name ?? "").trim().slice(0, 80) || path.basename(dir);
+      const created = store.createProject(name, dir);
+      const before = (store.db.prepare("SELECT MAX(id) n FROM event").get() as { n: number | null }).n ?? 0;
+      await importChangedTranscripts(store, created.id, dir, { claudeHome: opts.recorder?.claudeHome });
+      importGitIfChanged(store, created.id, dir);
+      correlate(store, created.id);
+      const q = (sql: string) => store.db.prepare(`SELECT ${sql} FROM event WHERE project_id = ? AND id > ?`).get(created.id, before) as any;
+      const span = q("MIN(occurred_at) f, MAX(occurred_at) t, COUNT(*) n");
+      log(`added project ${name} (${dir}): ${span.n} events from its past`);
+      return {
+        project: created,
+        imported: { events: span.n, from: span.f, to: span.t,
+          conversations: q("COUNT(DISTINCT session_id) n").n === 0 ? 0 : count(created.id, "COUNT(DISTINCT session_id)", "event_type = 'prompt_submitted' AND actor = 'user'"),
+          prompts: count(created.id, "COUNT(*)", "event_type = 'prompt_submitted' AND actor = 'user'"),
+          commits: count(created.id, "COUNT(*)", "event_type = 'git_commit'") },
+        transcriptsKeptDays: transcriptRetentionDays(),
+      };
+    }
     if (parts[0] !== "projects" || !parts[1]) throw new HttpError(404, "Not found");
     const p = project(parts[1]);
     const sub = parts.slice(2);

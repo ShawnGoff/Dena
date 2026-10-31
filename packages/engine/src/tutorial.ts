@@ -27,15 +27,20 @@ export interface TutorialPlan {
 
 const changedSomething = (e: { stats: { fileChanges: number; commits: number; tests: number } }) => e.stats.fileChanges > 0 || e.stats.commits > 0 || e.stats.tests > 0;
 
+/** The steps worth explaining (they changed something), and which of them are not explained yet. */
+export function stepCoverage(store: Store, projectId: string): { steps: string[]; explained: string[]; missing: string[]; asInstructions: number } {
+  const revs = loadEpisodes(store, projectId).filter(changedSomething).map((e) => ({ e, rev: activeRevision(store, projectId, "step", e.id) }));
+  return { steps: revs.map((x) => x.e.id), explained: revs.filter((x) => x.rev).map((x) => x.e.id), missing: revs.filter((x) => !x.rev).map((x) => x.e.id),
+    asInstructions: revs.filter((x) => x.rev?.content?.instructions?.length).length };
+}
+
 export function tutorialPlan(store: Store, projectId: string, model?: string): TutorialPlan {
-  const eps = loadEpisodes(store, projectId).filter(changedSomething);
-  const revs = eps.map((e) => ({ e, rev: activeRevision(store, projectId, "step", e.id) }));
-  const explained = revs.filter((x) => x.rev);
-  const missing = revs.filter((x) => !x.rev).map((x) => x.e.id);
+  const cov = stepCoverage(store, projectId);
+  const missing = cov.missing;
   return {
-    steps: eps.length,
-    explained: explained.length,
-    asInstructions: explained.filter((x) => x.rev!.content?.instructions?.length).length,
+    steps: cov.steps.length,
+    explained: cov.explained.length,
+    asInstructions: cov.asInstructions,
     missing,
     explainEstimate: missing.length ? estimate(store, projectId, missing, { model }) : null,
     pageEstimate: estimateSectionTokens(store, projectId, buildBrief(store, projectId, "tutorial"), model),

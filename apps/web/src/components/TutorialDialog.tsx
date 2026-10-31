@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { tokenRange } from "../format";
+import { BudgetChoice } from "./BudgetChoice";
 import { BusyBar, ModelChoice } from "./BusyBar";
 
 interface Plan {
@@ -76,6 +77,10 @@ export function TutorialDialog({ projectId, onClose, onDone }: { projectId: stri
                 <span><b>Explain the other {plan.missing.length} steps first, then write it</b><br />
                   <span className="muted small">{tokenRange(both.low, both.high)} in total, in about {plan.explainEstimate!.modelCalls + 1} calls. This can take several minutes.</span></span>
               </label>
+            )}
+            {plan.missing.length > 0 && explainRest && (
+              <div style={{ margin: "4px 0 8px 32px" }}><BudgetChoice projectId={projectId} />
+                <span className="faint small" style={{ display: "block" }}>If the budget runs out first, the tutorial is written from the steps explained so far.</span></div>
             )}
             {stories > 0 && <p className="faint small">{stories} explained {stories === 1 ? "step was" : "steps were"} written as a story, before steps became instructions. They are used as they are; rewriting them as instructions on their own pages gives a better tutorial.</p>}
             <p className="faint small">Token estimate {plan.pageEstimate.calibrated ? "" : "uses "}{plan.pageEstimate.basis}. It is a range, not a promise.</p>

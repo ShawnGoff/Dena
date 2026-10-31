@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 
-type Settings = { model: string | null; depth: "concise" | "thorough"; auth: "account" | "api-key"; maxTokensPerRun: number | null };
-const BUDGETS = [50_000, 100_000, 200_000, 500_000];
+type Settings = { model: string | null; depth: "concise" | "thorough"; auth: "account" | "api-key" };
 type Auth = { found: boolean; loggedIn: boolean; method: string | null; detail: string };
 
 const CHANGED = "dena:settings-changed";
@@ -49,14 +48,6 @@ export function ModelSettings({ projectId }: { projectId: string }) {
         <select value={s.depth} onChange={(e) => save({ depth: e.target.value as "concise" | "thorough" })}>
           <option value="concise">Concise (less usage)</option>
           <option value="thorough">Thorough</option>
-        </select>
-      </label>
-      <label title="The most tokens one batch run may use: explaining many steps or a folder, or the update queue. What is left waits for the next run.">
-        <span className="faint">Budget</span>
-        <select value={s.maxTokensPerRun ?? ""} onChange={(e) => save({ maxTokensPerRun: e.target.value ? Number(e.target.value) : null })}>
-          <option value="">No limit per run</option>
-          {BUDGETS.map((b) => <option key={b} value={b}>{b / 1000}k tokens per run</option>)}
-          {s.maxTokensPerRun != null && !BUDGETS.includes(s.maxTokensPerRun) && <option value={s.maxTokensPerRun}>{Math.round(s.maxTokensPerRun / 1000)}k tokens per run</option>}
         </select>
       </label>
       <label>

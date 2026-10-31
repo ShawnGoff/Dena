@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
 import { git, hookInstall, lastHeartbeat, liveRecorder, pausedWindows, Recorder, type RecorderOptions } from "@dena/adapters";
-import { exportGuideHtml, tutorialPlan, writeTutorial, episodeChapters, howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, explainFolder, folderPlan, inFolder, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
+import { explainMany, stepCoverage, exportGuideHtml, tutorialPlan, writeTutorial, episodeChapters, howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, explainFolder, folderPlan, inFolder, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
   estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
@@ -77,6 +77,8 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
   const inFlight = new Map<string, AbortController>();
   /** How far a whole-folder code explanation has got, for the page to show while it runs. */
   const folderProgress = new Map<string, { done: number; total: number; current: string | null }>();
+  /** How far "explain the remaining steps" has got. */
+  const batchProgress = new Map<string, { done: number; total: number; current: string | null }>();
   const stopped = (e: unknown) => e instanceof StoppedError;
 
   // Background updates: one runner per project; retries are scheduled, and queued work resumes after a restart.
@@ -411,6 +413,44 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     if (sub[0] === "export" && method === "GET") {
       const r = exportGuideMarkdown(store, p.id);
       return { filename: `${p.name.replace(/[^\w.-]+/g, "-")}-guide.md`, markdown: r.markdown, counts: r.counts };
+    }
+
+    if (sub[0] === "guide" && ["plan", "explain-rest", "stop"].includes(sub[1] ?? "")) {
+      const flight = `${p.id}:guide-batch`;
+      const model = (method === "GET" ? url.searchParams.get("model") : body?.model) || undefined;
+      if (model !== undefined && (typeof model !== "string" || !MODEL_NAME.test(model))) throw new HttpError(400, "Invalid model name");
+      if (sub[1] === "plan" && method === "GET") {
+        const cov = stepCoverage(store, p.id);
+        const est = cov.missing.length ? estimate(store, p.id, cov.missing, { model }) : null;
+        return { steps: cov.steps.length, explained: cov.explained.length, missing: cov.missing.length, estimate: est,
+          progress: batchProgress.get(flight) ?? null, settings: { model: store.projectSettings(p.id).model ?? null, depth: store.projectSettings(p.id).depth } };
+      }
+      if (sub[1] === "stop" && method === "POST") {
+        const c = inFlight.get(flight);
+        c?.abort();
+        return { stopping: !!c };
+      }
+      if (sub[1] === "explain-rest" && method === "POST") {
+        if (inFlight.has(flight)) throw new HttpError(409, "Steps are already being explained");
+        const ids = stepCoverage(store, p.id).missing;
+        const controller = new AbortController();
+        inFlight.set(flight, controller);
+        let done = 0;
+        batchProgress.set(flight, { done: 0, total: ids.length, current: null });
+        try {
+          const r = await explainMany(store, p.id, ids, getProvider(p.id), { model, signal: controller.signal, log: (m) => log(`[${p.name}] guide: ${m}`),
+            onProgress: () => batchProgress.set(flight, { done: ++done, total: ids.length, current: null }) });
+          return { explained: r.explained.filter((x) => !x.cached).length, leftForNextRun: r.skippedForBudget.length, spentTokens: r.spentTokens, calls: r.calls };
+        } catch (e) {
+          if (stopped(e)) throw new HttpError(409, "Stopped. Steps explained before you stopped are kept.");
+          const msg = (e as Error).message;
+          log(`[${p.name}] guide batch failed: ${msg}`);
+          throw new HttpError(502, /^(Claude Code|Claude is|Your Anthropic|No valid API key)/.test(msg) ? msg : "The model call failed. Check Claude Code's sign-in, then try again.");
+        } finally {
+          inFlight.delete(flight);
+          batchProgress.delete(flight);
+        }
+      }
     }
 
     if (sub[0] === "tutorial") {

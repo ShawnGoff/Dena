@@ -3,6 +3,7 @@ import { api } from "../api";
 import { Badge, Loading } from "../components/Bits";
 import { BusyBar, ModelChoice } from "../components/BusyBar";
 import { ModelSettings, useSettingsChanged } from "../components/ModelSettings";
+import { BudgetChoice } from "../components/BudgetChoice";
 import { tokenLine, tokenRange, when } from "../format";
 
 interface FileSummary { path: string; language: string; bytes: number; symbols: number; current: number; changed: number; new: number; fileDoc: "current" | "outdated" | "none" }
@@ -318,8 +319,9 @@ function FolderDialog({ projectId, dir, onClose, onDone }: { projectId: string; 
     setStopping(false);
     setErr(null);
     try {
-      const r = await api<{ files: number; explained: number; calls: number }>(`projects/${projectId}/code/explain-folder`, { method: "POST", body: { dir, model: runModel || undefined } });
-      setResult(`Explained ${r.explained} ${r.explained === 1 ? "part" : "parts"} in ${r.files} ${r.files === 1 ? "file" : "files"}, in ${r.calls} ${r.calls === 1 ? "call" : "calls"}.`);
+      const r = await api<{ files: number; explained: number; calls: number; leftForBudget: number }>(`projects/${projectId}/code/explain-folder`, { method: "POST", body: { dir, model: runModel || undefined } });
+      setResult(`Explained ${r.explained} ${r.explained === 1 ? "part" : "parts"} in ${r.files} ${r.files === 1 ? "file" : "files"}, in ${r.calls} ${r.calls === 1 ? "call" : "calls"}.`
+        + (r.leftForBudget ? ` ${r.leftForBudget} ${r.leftForBudget === 1 ? "file was" : "files were"} left for the next run, to stay within the budget.` : ""));
       onDone();
     } catch (e) {
       setErr((e as Error).message);
@@ -344,6 +346,7 @@ function FolderDialog({ projectId, dir, onClose, onDone }: { projectId: string; 
                 one file at a time. A whole folder is a lot of code, so check the estimate first.</p>
               <p className="choice-like"><b>{tokenRange(plan.estimate!.low, plan.estimate!.high)}</b> in about {plan.calls} {plan.calls === 1 ? "call" : "calls"}.
                 <span className="faint small" style={{ display: "block" }}>Files already explained and unchanged are skipped. Token estimate {plan.estimate!.calibrated ? "" : "uses "}{plan.estimate!.basis}. It is a range, not a promise.</span></p>
+              <BudgetChoice projectId={projectId} />
               <details className="small"><summary>Files it would send</summary><ul className="plain">{plan.pending.map((p) => <li key={p.path} className="mono small">{p.path} · {p.symbols} parts{p.fileDoc ? " + page" : ""}</li>)}</ul></details>
             </>
           )

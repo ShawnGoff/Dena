@@ -355,3 +355,34 @@ describe("updates left waiting", () => {
     fs.rmSync(h, { recursive: true, force: true });
   });
 });
+
+describe("explaining the remaining steps", () => {
+  it("states the estimate, explains what is missing, and then has nothing left", async () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), "dena-rest-"));
+    const s = new Store(h);
+    const p = s.createProject("rest", "/nonexistent/rest");
+    s.ingest(p.id, { sessions: [], artifacts: [], gaps: [], links: [], events: [
+      { sessionId: null, source: "t", sourceEventId: "p1", eventType: "prompt_submitted", occurredAt: "2026-10-01T10:00:00Z", actor: "user", summary: "Add a thing", payload: { text: "Add a thing" }, captureConfidence: "observed" },
+      { sessionId: null, source: "t", sourceEventId: "f1", eventType: "file_modified", occurredAt: "2026-10-01T10:01:00Z", actor: "ai_agent", summary: "Modified a.ts", payload: { file: "a.ts" }, captureConfidence: "observed" },
+    ] });
+    const srv2 = await startServer(s, { port: 0, webDir: web, provider: fake });
+    const call = (pathname: string, method = "GET") => new Promise<any>((resolve) => {
+      const r = http.request({ host: "127.0.0.1", port: srv2.port, path: pathname, method, headers: { host: `127.0.0.1:${srv2.port}`, "x-dena-token": srv2.token, "content-type": "application/json" } }, (res) => {
+        let t = "";
+        res.on("data", (c) => (t += c));
+        res.on("end", () => resolve({ status: res.statusCode, json: JSON.parse(t) }));
+      });
+      r.end(method === "POST" ? "{}" : undefined);
+    });
+    const plan = (await call(`/api/projects/${p.id}/guide/plan`)).json;
+    expect(plan).toMatchObject({ steps: 1, explained: 0, missing: 1 });
+    expect(plan.estimate.modelCalls).toBe(1);
+    const r = await call(`/api/projects/${p.id}/guide/explain-rest`, "POST");
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ explained: 1, leftForNextRun: 0 });
+    expect((await call(`/api/projects/${p.id}/guide/plan`)).json.missing).toBe(0);
+    await srv2.close();
+    s.close();
+    fs.rmSync(h, { recursive: true, force: true });
+  });
+});

@@ -105,9 +105,12 @@ Dena only calls a model when you ask it to write something, and it shows an esti
 - **Depth**: *Concise* (the default) writes shorter steps with far fewer tokens than *Thorough*.
 - Steps that changed nothing (a question, "yes, go ahead") and steps that only saved work in git
   ("commit, merge, push") are written from the facts, without a model.
-- **Budget per run** (in the same settings box, or `dena config <project> max-tokens 100k`): a run
-  that explains many steps or a folder, or works through the update queue, stops at that many
-  tokens; the next run carries on where it stopped. Use it to spread a big job over several days.
+- **Explain remaining steps…** in the Guide explains every step not explained yet, in as few calls
+  as possible, after showing the estimate.
+- **Budget for big jobs** ("Stop at about …" where a big job starts: remaining steps, a folder, the
+  tutorial's "explain first", the update queue; or `dena config <project> max-tokens 100k`): the run
+  stops before going over, keeps every finished step, and the next run carries on where it stopped.
+  Use it to spread a big job over several days. It does not change how steps are written.
 - Updates still waiting when Dena stopped never resume on their own; Overview asks first.
 - Dena sends the model only what a step can teach from: the changed lines of each diff (not the
   surrounding code), commands that did something (commands that only looked around become one

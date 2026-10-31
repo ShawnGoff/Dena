@@ -3,6 +3,7 @@ import { api } from "../api";
 import { Badge } from "./Bits";
 import { tokenRange, when } from "../format";
 import { useSettingsChanged } from "./ModelSettings";
+import { BudgetChoice } from "./BudgetChoice";
 
 interface Outdated { type: "step" | "wiki"; key: string; title: string; reason: string; userEdited: boolean; chars: number; waiting: boolean }
 interface Job { id: number; type: string; key: string; status: string; attempts: number; nextAt: string; lastError: string | null; result: string | null; updatedAt: string }
@@ -90,7 +91,7 @@ export function GuideUpdates({ projectId }: { projectId: string }) {
           </div>
           <div className="row" style={{ marginTop: 10 }}>
             <button className="btn primary" disabled={busy || active} onClick={() => post("run")}>{active ? "Updating…" : `Update ${u.outdated.length === 1 ? "it" : `all ${u.outdated.length}`}`}</button>
-            {u.settings.maxTokensPerRun != null && <span className="faint small">Stops at about {Math.round(u.settings.maxTokensPerRun / 1000)}k tokens; the rest waits for the next run.</span>}
+            {u.outdated.length > 1 && <BudgetChoice projectId={projectId} />}
           </div>
         </>
       )}

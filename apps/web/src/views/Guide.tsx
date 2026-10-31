@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type Claim, type Episode, type ExplanationInfo, type Step, type StoredExplanation } from "../api";
 import { DocBar, type DocResponse } from "../components/DocBar";
 import { HowBuilt } from "../components/HowBuilt";
+import { StepsDialog } from "../components/StepsDialog";
 import { useSettingsChanged } from "../components/ModelSettings";
 import { AboutGuide } from "../components/AboutGuide";
 import { ModelSettings } from "../components/ModelSettings";
@@ -24,9 +25,11 @@ export function Guide({ projectId, openEpisode, onEpisode, onEvent }: {
 }) {
   const [eps, setEps] = useState<Episode[] | null>(null);
   const [onlyChanges, setOnlyChanges] = useState(true);
+  const [batch, setBatch] = useState(false);
+  const loadEps = useCallback(() => api<Episode[]>(`projects/${projectId}/episodes`).then(setEps, () => setEps([])), [projectId]);
   useEffect(() => {
-    api<Episode[]>(`projects/${projectId}/episodes`).then(setEps, () => setEps([]));
-  }, [projectId]);
+    loadEps();
+  }, [loadEps]);
 
   if (!eps) return <Loading />;
   if (!eps.length) return <div className="empty"><b>Nothing to explain yet</b>Record some work first.</div>;
@@ -34,15 +37,24 @@ export function Guide({ projectId, openEpisode, onEpisode, onEvent }: {
   const list = onlyChanges ? eps.filter((e) => e.stats.fileChanges || e.stats.commits || e.stats.tests || e.id === openEpisode) : eps;
   const current = eps.find((e) => e.id === openEpisode) ?? list[0] ?? eps[0]!;
   const markExplained = (id: string) => setEps((all) => all?.map((e) => (e.id === id ? { ...e, explained: true } : e)) ?? null);
+  const remaining = eps.filter((e) => !e.explained && (e.stats.fileChanges || e.stats.commits || e.stats.tests)).length;
 
   return (
     <div className="guide">
+      {batch && <StepsDialog projectId={projectId} onClose={() => setBatch(false)} onDone={loadEps} />}
       <nav className="toc" aria-label="Walkthrough">
         <ModelSettings projectId={projectId} />
         <AboutGuide projectId={projectId} />
         <label className="toggle" style={{ padding: "0 8px 10px" }}>
           <input type="checkbox" checked={onlyChanges} onChange={(e) => setOnlyChanges(e.target.checked)} /> only steps that changed something
         </label>
+        {remaining > 0 && (
+          <div style={{ padding: "0 8px 10px" }}>
+            <button className="btn" onClick={() => setBatch(true)} title="Explain every step not explained yet, with an estimate and a budget first">
+              Explain remaining steps ({remaining})…
+            </button>
+          </div>
+        )}
         {list.map((e, i) => (
           <div key={e.id}>
             {e.chapter && e.chapter.key !== list[i - 1]?.chapter?.key && (

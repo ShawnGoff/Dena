@@ -176,7 +176,7 @@ footer { margin-top: 48px; color: var(--dim); font-size: 13px; }
 <body>
 <main>
 ${body}
-<footer>Made with Dena from captured project evidence. AI-written text can be wrong; each statement is labelled with how sure it is.</footer>
+<footer>Made with Dena (Development Explained, Not Assumed) from captured project evidence. AI-written text can be wrong; each statement is labelled with how sure it is.</footer>
 </main>
 </body>
 </html>

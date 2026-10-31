@@ -45,34 +45,55 @@ git clone https://github.com/ShawnGoff/Dena.git
 cd Dena
 npm install
 npm run build:web
+npm link
 ```
+
+`npm link` makes the `dena` command available in any folder (`npm unlink -g dena` removes it).
+Keep the cloned folder where it is: the command runs Dena from there. Without `npm link`, run
+commands from the Dena folder as `npm run -s dena -- <command>` instead.
 
 Register the project you want to document (any folder you work on with Claude Code):
 
 ```bash
-npm run -s dena -- init ~/code/my-app
+dena init ~/code/my-app
 ```
 
 Optionally, turn on live capture from Claude Code. Dena shows exactly what it will add to the
 folder's Claude Code settings and writes nothing until you add `--yes`:
 
 ```bash
-npm run -s dena -- hooks install my-app
-npm run -s dena -- hooks install my-app --yes
+dena hooks install my-app
+dena hooks install my-app --yes
 ```
 
-Start Dena and open the link it prints:
+Start Dena and open it in your browser:
 
 ```bash
-npm run -s dena -- serve
+dena serve --open
 ```
 
 In the page, press **Start recording**, then work with Claude Code as usual. Dena captures as you
 go: transcripts, file changes, git, and (with hooks) exit codes and timings. When there is work to
 look at, open **Guide**, pick a step and press **Explain**.
 
-Keep the terminal running `serve` open while you work: closing it stops recording. Each start
-prints a new link, because the link carries a one-time key.
+The link carries a key that keeps other web pages out. It stays the same each time Dena starts, so
+you can bookmark it; `dena open` opens it whenever Dena is running, and `dena serve --new-key`
+replaces the key.
+
+### Keep it running in the background (macOS)
+
+With `dena serve`, recording stops when you close that terminal. To have Dena start when you log
+in and keep running, add it as a login item. Dena shows exactly what it will add and writes nothing
+until you add `--yes`:
+
+```bash
+dena service install
+dena service install --yes
+dena open
+```
+
+Projects you left recording carry on recording. `dena service status` shows whether it is running,
+the log is in `~/.dena/logs/server.log`, and `dena service uninstall` removes it.
 
 ## Usage and cost
 
@@ -84,16 +105,18 @@ Dena only calls a model when you ask it to write something, and it shows an esti
 - **Depth**: *Concise* (the default) writes shorter steps with far fewer tokens than *Thorough*.
 - Steps that changed nothing (a question, "yes, go ahead") are summarised without a model.
 - Updates are targeted: only the statements whose evidence changed are sent again.
-- Writing the whole-project tutorial covers every explained step, so it always asks first and
-  shows the estimate.
+- Writing the whole-project tutorial, or explaining a whole folder of code (*Explain folder…* in
+  the Code tab), covers a lot at once, so it always asks first and shows the estimate.
 - Every call's real token use is recorded. Estimates are ranges learned from your recent calls.
 
-As a rough guide on Haiku: a concise step takes about 8k tokens, a wiki page about 14k.
+As a rough guide on Haiku: a concise step takes about 8k tokens, a wiki page about 14k, and a code
+file of a few hundred lines about 8k.
 
 ## Privacy and safety
 
 - Dena's data lives in `~/.dena` (set `DENA_HOME` to put it elsewhere). It is never committed or uploaded.
-- The local server listens on `127.0.0.1` only and needs the key from the printed link.
+- The local server listens on `127.0.0.1` only and needs the key in its link. The key is kept in
+  `~/.dena/server-key`, readable only by you.
 - Secrets that look like API keys, tokens or passwords are removed before anything is stored or
   sent. Files such as `.env`, private keys and credential files are never read; their changes are
   recorded only as "a sensitive file changed".
@@ -110,12 +133,14 @@ the evidence connects a change to one of the AI's commands. Known gaps are liste
 
 ## Command line
 
-Run any command with `npm run -s dena -- <command>`. The most useful:
+Run any command as `dena <command>` (or `npm run -s dena -- <command>` from the Dena folder). The most useful:
 
 | Command | What it does |
 |---|---|
 | `init <dir>` | Register a project folder |
-| `serve [--port N]` | Open the web interface (recording starts from there) |
+| `serve [--open]` | Start the web interface (recording starts from there) |
+| `open` | Open the running Dena in your browser |
+| `service install [--yes]` | Keep Dena running in the background on macOS (a login item) |
 | `record <project>` | Record from the terminal instead, until Ctrl-C |
 | `hooks install <project> [--yes]` | Live capture from Claude Code (shows the change first) |
 | `episodes <project>` | List the pieces of work Dena found |
@@ -127,7 +152,7 @@ Run any command with `npm run -s dena -- <command>`. The most useful:
 | `export <project> [--html] [--out FILE]` | The whole guide as Markdown, or as one shareable HTML page |
 | `config <project> [key value]` | Model, depth, sign-in and spending cap |
 
-`npm run -s dena -- help` lists everything.
+`dena help` lists everything.
 
 ## How it works
 

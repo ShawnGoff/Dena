@@ -6,6 +6,7 @@ import { claudeCode, git, hookInstall, hooks, importGitIfChanged, Recorder, tran
 import { exportGuideHtml, codeOverview, codePage, explainFile, formatTokenRange, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, formatTokens, exportGuideMarkdown, buildBrief, buildPacket, claudeAuthStatus, ensureMemory, generateSection, loadMemory, renderWikiMarkdown, sectionKeys, storedSection, type SectionKey, ClaudeCodeProvider, estimate, explainEpisode, explainMany, loadEpisodes, rebuildEpisodes, renderPacket, renderStep, type Depth } from "@dena/engine";
 import fs from "node:fs";
 import { startServer } from "@dena/server";
+import { clearServerInfo, installService, openInBrowser, runningServer, serverKey, servicePlan, servicePlist, serviceStatus, uninstallService, writeServerInfo } from "./launch.ts";
 
 const HOME = process.env.DENA_HOME ?? path.join(os.homedir(), ".dena");
 const [cmd, ...args] = process.argv.slice(2);
@@ -51,7 +52,12 @@ const USAGE = `dena <command>
   export <project> [--html] [--out FILE]
                                  the whole guide as one Markdown file, or with --html as one HTML page to share
                                  (current versions, with your edits)
-  serve [--port N]               open Dena's interface in your browser (local only; the printed link carries a one-time key)
+  serve [--port N] [--open] [--new-key]
+                                 start Dena's interface (local only); the link carries a key that stays the same
+                                 between runs (--new-key replaces it); --open opens it in your browser
+  open                           open the running Dena in your browser
+  service status|install|uninstall [--port N] [--yes]
+                                 keep Dena running in the background on macOS (a login item); shows the change first
   config <project> [key value]   show or set: model (e.g. haiku, sonnet; "default" = your Claude Code default),
                                  depth (concise|thorough), max-usd (per batch run; "none" to clear),
                                  auth (account = your Claude subscription, the default; api-key = billed API credits)
@@ -390,8 +396,19 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         break;
       }
       case "serve": {
-        const srv = await startServer(store, { port: flag("port") ? Number(flag("port")) : 4600, log: (m) => console.log(`${new Date().toTimeString().slice(0, 8)}  ${m}`) });
-        console.log(`Dena is running at:\n\n  ${srv.url}\n\nOnly this computer can reach it, and only with the key in that link. Ctrl-C to stop (stops any recording started here).`);
+        const already = await runningServer(store.home);
+        if (already) {
+          // A second copy would fight the first over recording; point at the one that is running.
+          console.log(`Dena is already running at:\n\n  ${already.url}`);
+          if (args.includes("--open")) openInBrowser(already.url);
+          break;
+        }
+        const srv = await startServer(store, { port: flag("port") ? Number(flag("port")) : 4600, token: serverKey(store.home, { renew: args.includes("--new-key") }),
+          log: (m) => console.log(`${new Date().toTimeString().slice(0, 8)}  ${m}`) });
+        writeServerInfo(store.home, { pid: process.pid, port: srv.port, url: srv.url, startedAt: new Date().toISOString() });
+        console.log(`Dena is running at:\n\n  ${srv.url}\n\nThe link stays the same each time Dena starts, so you can bookmark it; \`dena open\` opens it too.
+Only this computer can reach it, and only with the key in that link. Ctrl-C to stop (stops any recording started here).`);
+        if (args.includes("--open")) openInBrowser(srv.url);
         await new Promise<void>((resolve) => {
           // Closing the terminal tab (SIGHUP) stops cleanly too, so recording state is never left wrong.
           process.once("SIGINT", resolve);
@@ -399,7 +416,53 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
           process.once("SIGHUP", resolve);
         });
         await srv.close();
+        clearServerInfo(store.home);
         break;
+      }
+      case "open": {
+        const r = await runningServer(store.home);
+        if (!r) {
+          console.log("Dena isn't running. Start it with `dena serve --open`, or keep it running in the background with `dena service install`.");
+          process.exitCode = 1;
+          break;
+        }
+        openInBrowser(r.url);
+        console.log(`Opened ${r.url.replace(/#t=.*/, "")} in your browser.`);
+        break;
+      }
+      case "service": {
+        const action = args[0] ?? "status";
+        const port = flag("port") ? Number(flag("port")) : 4600;
+        if (action === "status") {
+          const st = serviceStatus();
+          const r = await runningServer(store.home);
+          console.log(`login item: ${st.installed ? (st.loaded ? "installed and running" : "installed, not running") : "not installed"}  (${servicePlist()})
+server:     ${r ? `running at ${r.url.replace(/#t=.*/, "")} (pid ${r.pid})` : "not running"}`);
+          break;
+        }
+        if (action === "install") {
+          const plan = servicePlan(store.home, port);
+          console.log(`Will add a login item that starts Dena when you log in and keeps it running:
+  file:    ${plan.file}
+  runs:    ${plan.command.join(" ")}
+  log:     ${plan.log}
+It starts the same Dena as \`dena serve\` (this folder: keep the Dena repository where it is), on port ${port}.
+Projects you left recording carry on recording. Remove it any time with \`dena service uninstall\`.`);
+          if (!args.includes("--yes")) {
+            console.log("\nNothing written. Re-run with --yes to add it.");
+            break;
+          }
+          const r = await runningServer(store.home);
+          if (r && !serviceStatus().loaded) console.log(`\nA Dena server is already running (pid ${r.pid}). Stop it (Ctrl-C in its terminal) so the login item can take over; it will start within 30 seconds.`);
+          installService(store.home, port);
+          console.log(`\nDone. Dena now runs in the background. Open it with \`dena open\`.`);
+          break;
+        }
+        if (action === "uninstall") {
+          console.log(uninstallService() ? "Removed the login item and stopped the background Dena." : "There was no login item to remove.");
+          break;
+        }
+        throw new Error("Use: dena service status|install|uninstall [--yes]");
       }
       case "config": {
         const p = project(store, args[0]);

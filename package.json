@@ -2,6 +2,9 @@
   "name": "dena",
   "private": true,
   "type": "module",
+  "bin": {
+    "dena": "packages/cli/bin/dena.mjs"
+  },
   "workspaces": [
     "packages/*",
     "apps/*"

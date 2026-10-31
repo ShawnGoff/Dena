@@ -39,6 +39,7 @@ export function Code({ projectId, file, onFile, onEvent }: { projectId: string; 
   const [files, setFiles] = useState<FileSummary[] | null>(null);
   const [filter, setFilter] = useState("");
   const load = useCallback(() => api<{ files: FileSummary[] }>(`projects/${projectId}/code`).then((r) => setFiles(r.files), () => setFiles([])), [projectId]);
+  const [folder, setFolder] = useState<string | null>(null);
   useEffect(() => {
     load();
   }, [load]);
@@ -59,6 +60,7 @@ export function Code({ projectId, file, onFile, onEvent }: { projectId: string; 
 
   return (
     <div className="guide">
+      {folder && <FolderDialog projectId={projectId} dir={folder} onClose={() => setFolder(null)} onDone={load} />}
       <nav className="toc" aria-label="Source files">
         <ModelSettings projectId={projectId} />
         <div className="side-label">Files</div>
@@ -66,7 +68,10 @@ export function Code({ projectId, file, onFile, onEvent }: { projectId: string; 
         <input className="code-filter" placeholder="Filter files" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter files" />
         {groups.map(([dir, fs]) => (
           <div key={dir}>
-            <div className="code-dir mono">{dir}</div>
+            <div className="code-dir mono">
+              <span>{dir}</span>
+              <button className="linkish small" onClick={() => setFolder(dir)} title="Explain every file in this folder that needs it">Explain folder…</button>
+            </div>
             {fs.map((f) => {
               const state = f.changed > 0 || f.fileDoc === "outdated" ? "outdated" : f.current > 0 ? (f.new > 0 ? "partial" : "done") : "none";
               return (
@@ -277,5 +282,87 @@ function SymbolCard({ s, lines, onEvent }: { s: Sym; lines: string[]; onEvent: (
         </pre>
       )}
     </article>
+  );
+}
+
+interface FolderPlan {
+  dir: string; files: number; symbols: number; calls: number;
+  pending: { path: string; symbols: number; fileDoc: boolean; calls: number }[];
+  estimate: { low: number; high: number; calibrated: boolean; basis: string } | null;
+}
+
+/**
+ * Explaining a whole folder covers a lot of code, so it asks first with the estimate, then shows
+ * which file it is on. Stop ends the current call; files already explained are kept.
+ */
+function FolderDialog({ projectId, dir, onClose, onDone }: { projectId: string; dir: string; onClose: () => void; onDone: () => void }) {
+  const [plan, setPlan] = useState<FolderPlan | null>(null);
+  const [model, setModel] = useState<string | null>(null);
+  const [runModel, setRunModel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number; current: string | null } | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const q = `projects/${projectId}/code/folder?dir=${encodeURIComponent(dir)}${runModel ? `&model=${runModel}` : ""}`;
+  useEffect(() => {
+    api<{ plan: FolderPlan; settings: { model: string | null } }>(q).then((r) => { setPlan(r.plan); setModel(r.settings.model); }, (e) => setErr(String(e.message)));
+  }, [q]);
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(() => api<{ progress: typeof progress }>(q).then((r) => r.progress && setProgress(r.progress), () => {}), 2000);
+    return () => clearInterval(t);
+  }, [busy, q]);
+  const run = async () => {
+    setBusy(true);
+    setStopping(false);
+    setErr(null);
+    try {
+      const r = await api<{ files: number; explained: number; calls: number }>(`projects/${projectId}/code/explain-folder`, { method: "POST", body: { dir, model: runModel || undefined } });
+      setResult(`Explained ${r.explained} ${r.explained === 1 ? "part" : "parts"} in ${r.files} ${r.files === 1 ? "file" : "files"}, in ${r.calls} ${r.calls === 1 ? "call" : "calls"}.`);
+      onDone();
+    } catch (e) {
+      setErr((e as Error).message);
+      onDone();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stop = async () => {
+    setStopping(true);
+    await api(`projects/${projectId}/code/stop`, { method: "POST", body: { folder: dir } }).catch(() => {});
+  };
+  return (
+    <div className="modal-backdrop" onClick={() => !busy && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="fold-title" onClick={(e) => e.stopPropagation()}>
+        <h2 id="fold-title">Explain everything in <span className="mono">{dir}</span>?</h2>
+        {!plan && !err && <p className="muted">Working out the estimate…</p>}
+        {plan && !result && (
+          plan.pending.length === 0 ? <p>Every file in this folder is already explained and up to date. Nothing to send.</p> : (
+            <>
+              <p>This explains <b>{plan.pending.length} of {plan.files} files</b> ({plan.symbols} new or changed parts{plan.pending.some((p) => p.fileDoc) ? ", plus file pages" : ""}),
+                one file at a time. A whole folder is a lot of code, so check the estimate first.</p>
+              <p className="choice-like"><b>{tokenRange(plan.estimate!.low, plan.estimate!.high)}</b> in about {plan.calls} {plan.calls === 1 ? "call" : "calls"}.
+                <span className="faint small" style={{ display: "block" }}>Files already explained and unchanged are skipped. Token estimate {plan.estimate!.calibrated ? "" : "uses "}{plan.estimate!.basis}. It is a range, not a promise.</span></p>
+              <details className="small"><summary>Files it would send</summary><ul className="plain">{plan.pending.map((p) => <li key={p.path} className="mono small">{p.path} · {p.symbols} parts{p.fileDoc ? " + page" : ""}</li>)}</ul></details>
+            </>
+          )
+        )}
+        {busy && (
+          <>
+            <BusyBar what={progress ? `File ${Math.min(progress.done + 1, progress.total)} of ${progress.total}${progress.current ? `: ${progress.current}` : ""}` : "Starting"} onStop={stop} stopping={stopping} />
+            <p className="faint small">Stopping ends the current call. Files already explained are kept.</p>
+          </>
+        )}
+        {result && <div className="notice">{result}</div>}
+        {err && <div className={err.startsWith("Stopped") ? "notice" : "error"}>{err}</div>}
+        <div className="row modal-actions">
+          {!result && plan && plan.pending.length > 0 && <ModelChoice value={runModel} onChange={setRunModel} projectDefault={model} />}
+          <span style={{ flex: 1 }} />
+          <button className="btn" disabled={busy} onClick={onClose}>{result || (plan && !plan.pending.length) ? "Close" : "Cancel"}</button>
+          {!result && plan && plan.pending.length > 0 && <button className="btn primary" disabled={busy} onClick={run}>Continue</button>}
+        </div>
+      </div>
+    </div>
   );
 }

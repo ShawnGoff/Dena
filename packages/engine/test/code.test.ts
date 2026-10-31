@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Store } from "@dena/core";
-import { codeOverview, codePage, explainFile, listCodeFiles, renderCodeMarkdown, splitSymbols, type Provider } from "../src/index.ts";
+import { codeOverview, codePage, explainFile, explainFolder, folderPlan, listCodeFiles, renderCodeMarkdown, splitSymbols, type Provider } from "../src/index.ts";
 
 let home: string;
 let root: string;
@@ -173,5 +173,41 @@ describe("code explainers", () => {
     expect(h.commits).toBe(1);
     expect(h.entries.map((e) => e.text)).toEqual(["You asked: “Add a CSV reader”", "Wrote the file", "Edited Reader.load", "Commit abc1234 “Add reader”"]);
     expect(codePage(store, pid, "src/csv.ts").symbols.find((s) => s.key === "Reader.load")!.aiEdits).toBe(1);
+  });
+});
+
+describe("explaining a whole folder", () => {
+  it("states what it would send first, explains only what needs it, and then has nothing left", async () => {
+    const before = folderPlan(store, pid, "src");
+    expect(before.files).toBe(3);
+    expect(before.pending.map((p) => p.path)).toEqual(["src/app.ts", "src/csv.ts", "src/util.ts"]);
+    expect(before.estimate!.high).toBeGreaterThan(before.estimate!.low);
+    expect(folderPlan(store, pid, "nope").files).toBe(0);
+
+    const fake = new FakeProvider();
+    await explainFile(store, pid, "src/csv.ts", fake); // already explained: skipped by the folder run
+    const progress: string[] = [];
+    const r = await explainFolder(store, pid, "src", fake, { onProgress: (p) => progress.push(`${p.done}/${p.total}${p.current ? ` ${p.current}` : ""}`) });
+    expect(r.files).toBe(2);
+    expect(progress).toEqual(["0/2 src/app.ts", "1/2 src/util.ts", "2/2"]);
+    expect(folderPlan(store, pid, "src").pending).toEqual([]);
+  });
+
+  it("stops between files when asked, keeping what was done", async () => {
+    const fake = new FakeProvider();
+    const stop = new AbortController();
+    await expect(explainFolder(store, pid, "src", fake, { signal: stop.signal, onProgress: (p) => { if (p.done === 1) stop.abort(); } })).rejects.toThrow();
+    expect(folderPlan(store, pid, "src").pending.length).toBe(1); // files finished before the stop are kept; the rest wait
+  });
+});
+
+describe("code estimates", () => {
+  it("learn from past code calls once there are three", async () => {
+    const fake = new FakeProvider();
+    for (const f of ["src/csv.ts", "src/util.ts", "src/app.ts"]) await explainFile(store, pid, f, fake);
+    fs.writeFileSync(path.join(root, "src/csv.ts"), SRC.replace("return this.rows.length;", "return 0;"));
+    const est = codePage(store, pid, "src/csv.ts").pending.estimate!;
+    expect(est.basis).toMatch(/^calibrated on 3 of your code explanations/);
+    expect(est.high).toBe(Math.round(est.low * 1.5));
   });
 });

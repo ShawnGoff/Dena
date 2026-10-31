@@ -335,7 +335,11 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 /* Code explainers */
 .code-filter { width: calc(100% - 16px); margin: 0 8px 10px; padding: 6px 9px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--bg-raised); color: var(--text); font-size: 13px; }
 .code-filter:focus { outline: none; border-color: var(--accent); }
-.code-dir { color: var(--text-faint); font-size: 11px; padding: 10px 8px 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-dir { color: var(--text-faint); font-size: 11px; padding: 10px 8px 3px; display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.code-dir > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.code-dir .linkish { font-size: 11px; white-space: nowrap; opacity: 0.75; }
+.code-dir .linkish:hover { opacity: 1; }
+.choice-like { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-sunken); }
 .code-links { display: grid; gap: 6px; margin-top: 10px; }
 .code-links > div { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
 .code-links code { font-size: 11.5px; color: var(--text-dim); }

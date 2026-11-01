@@ -6,6 +6,7 @@ import type { Claim } from "./schema.ts";
 import { sectionKeys, sourceLabel, type WikiSource } from "./wiki.ts";
 import { isStandingLimitationText, standingLimitations } from "./packet.ts";
 import { howBuiltPage, howBuiltStep, type HowBuilt } from "./howbuilt.ts";
+import { codeOverview, codePage, type CodePage } from "./code.ts";
 
 /** "How the AI built this" as one line of counts, read from captured events. */
 export function howBuiltLine(h: HowBuilt): string {
@@ -37,7 +38,7 @@ function claimLine(c: Claim, refLabel: (ref: string) => string): string {
 
 export interface ExportResult {
   markdown: string;
-  counts: { wikiPages: number; steps: number; stepsTotal: number };
+  counts: { wikiPages: number; steps: number; stepsTotal: number; codeFiles: number };
 }
 
 export function exportGuideMarkdown(store: Store, projectId: string, opts: { generatedAt?: string } = {}): ExportResult {
@@ -122,6 +123,22 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
     }
   }
 
+  // Code: files with written explainers, as they read today. Files that are gone or unreadable are skipped.
+  const code = codeOverview(store, projectId)
+    .filter((f) => f.current + f.changed > 0 || f.fileDoc !== "none")
+    .flatMap((f) => {
+      try {
+        return [codePage(store, projectId, f.path)];
+      } catch {
+        return [];
+      }
+    });
+  if (code.length) {
+    h2("Code");
+    out.push(`${code.length} ${code.length === 1 ? "file has" : "files have"} explainers. AI-written readings of the code; check them against the code itself.`);
+    for (const page of code) out.push(...codeSection(page));
+  }
+
   // Facts-built sections.
   const problems = of("problem").sort((a, b) => b.sortKey - a.sortKey);
   if (problems.length) {
@@ -153,13 +170,35 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
   const head = [
     `# ${project.name}: how it got built`, "",
     `> **Written by AI from what Dena recorded of the project, with the owner's corrections. It can be wrong.** Statements are labeled: **✓ Observed** (shown by its sources), **~ Inferred** (a reasonable conclusion), **💬 Agent said** (the AI's own account), **🗣 You said** (the owner's context), **📘 Background** (general knowledge). References point to captured events (#123) kept in Dena.`,
-    "", `*Exported from Dena on ${date.slice(0, 16).replace("T", " ")} UTC · ${episodes.length} steps, ${steps.length} explained · ${pages.length} wiki pages written*`,
+    "", `*Exported from Dena on ${date.slice(0, 16).replace("T", " ")} UTC · ${episodes.length} steps, ${steps.length} explained · ${pages.length} wiki pages written${code.length ? ` · ${code.length} code ${code.length === 1 ? "file" : "files"} explained` : ""}*`,
     ...(standingLimitations(store, projectId).length
       ? ["", "**About this guide.** What Dena could not capture, true for the whole project:", "", ...standingLimitations(store, projectId).map((l) => `- ${l}`),
         "- Changes the file watcher or git saw have no recorded author; where Dena connects them to the AI, that is marked as likely, not certain."]
       : []),
     "", "## Contents", "", ...toc,
   ];
-  if (!pages.length && !steps.length) head.push("", "*Nothing has been written yet. Open the Wiki or the Guide in Dena to write pages; the sections below are built from captured facts.*");
-  return { markdown: [...head, ...out, ""].join("\n"), counts: { wikiPages: pages.length, steps: steps.length, stepsTotal: episodes.length } };
+  if (!pages.length && !steps.length && !code.length) head.push("", "*Nothing has been written yet. Open the Wiki or the Guide in Dena to write pages; the sections below are built from captured facts.*");
+  return { markdown: [...head, ...out, ""].join("\n"), counts: { wikiPages: pages.length, steps: steps.length, stepsTotal: episodes.length, codeFiles: code.length } };
+}
+
+/** One file's explainer, nested under the guide's Code heading. Parts not explained yet are counted, not listed. */
+function codeSection(page: CodePage): string[] {
+  const out = ["", `### ${page.file.path}`, ""];
+  if (page.fileDoc) {
+    out.push(page.fileDoc.doc.purpose + (page.fileDoc.current ? "" : " *(the file has changed since this was written)*"));
+    if (page.fileDoc.doc.fitsIn.length) out.push("", "#### How it fits in", "", ...page.fileDoc.doc.fitsIn.map((x) => `- ${x}`));
+    if (page.fileDoc.doc.learn.length) out.push("", "#### What you can learn here", "", ...page.fileDoc.doc.learn.map((c) => `- **${c.concept}** — ${c.explanation}`));
+  }
+  const explained = page.symbols.filter((s) => s.doc);
+  if (explained.length) {
+    out.push("", "#### Inside the file");
+    for (const s of explained) {
+      out.push("", `\`${s.key}\` (${s.kind}, lines ${s.startLine}–${s.endLine})${s.status === "changed" ? " — *changed since explained*" : ""}: ${s.doc!.summary}`);
+      if (s.doc!.how.length) out.push("", ...s.doc!.how.map((x) => `- ${x}`));
+      if (s.doc!.watch.length) out.push("", ...s.doc!.watch.map((x) => `- ⚠️ ${x}`));
+    }
+  }
+  const missing = page.symbols.length - explained.length;
+  if (missing) out.push("", `*${missing} more ${missing === 1 ? "part is" : "parts are"} not explained yet.*`);
+  return out;
 }

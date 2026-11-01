@@ -394,7 +394,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         const r = html ? exportGuideHtml(store, p.id) : exportGuideMarkdown(store, p.id);
         const out = flag("out") ?? `${p.name}-guide.${html ? "html" : "md"}`;
         fs.writeFileSync(out, "html" in r ? r.html : r.markdown);
-        console.log(`Wrote ${out}: ${r.counts.wikiPages} wiki pages, ${r.counts.steps} of ${r.counts.stepsTotal} steps explained, plus problems, decisions, glossary and unknowns.`);
+        console.log(`Wrote ${out}: ${r.counts.wikiPages} wiki pages, ${r.counts.steps} of ${r.counts.stepsTotal} steps explained, ${r.counts.codeFiles} code files, plus problems, decisions, glossary and unknowns.`);
         break;
       }
       case "serve": {

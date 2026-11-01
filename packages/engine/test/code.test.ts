@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Store } from "@dena/core";
-import { codeOverview, codePage, explainFile, explainFolder, folderPlan, listCodeFiles, renderCodeMarkdown, splitSymbols, type Provider } from "../src/index.ts";
+import { codeOverview, codePage, explainFile, exportGuideHtml, exportGuideMarkdown, explainFolder, folderPlan, listCodeFiles, renderCodeMarkdown, splitSymbols, type Provider } from "../src/index.ts";
 
 let home: string;
 let root: string;
@@ -173,6 +173,19 @@ describe("code explainers", () => {
     expect(h.commits).toBe(1);
     expect(h.entries.map((e) => e.text)).toEqual(["You asked: “Add a CSV reader”", "Wrote the file", "Edited Reader.load", "Commit abc1234 “Add reader”"]);
     expect(codePage(store, pid, "src/csv.ts").symbols.find((s) => s.key === "Reader.load")!.aiEdits).toBe(1);
+  });
+});
+
+describe("the guide export", () => {
+  it("includes explained code files and counts the parts not explained yet", async () => {
+    expect(exportGuideMarkdown(store, pid).counts.codeFiles).toBe(0);
+    await explainFile(store, pid, "src/csv.ts", new FakeProvider());
+    const { markdown, counts } = exportGuideMarkdown(store, pid);
+    expect(counts.codeFiles).toBe(1);
+    expect(markdown).toContain("- [Code](#code)");
+    expect(markdown).toContain("### src/csv.ts");
+    expect(markdown).not.toContain("### src/util.ts");
+    expect(exportGuideHtml(store, pid).html).toContain('<h3 id="src-csv-ts">src/csv.ts</h3>');
   });
 });
 

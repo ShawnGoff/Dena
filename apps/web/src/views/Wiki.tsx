@@ -257,7 +257,7 @@ function ExportButton({ projectId }: { projectId: string }) {
     setBusy(format);
     setMsg(null);
     try {
-      const r = await api<{ filename: string; markdown?: string; html?: string; counts: { wikiPages: number; steps: number; stepsTotal: number } }>(
+      const r = await api<{ filename: string; markdown?: string; html?: string; counts: { wikiPages: number; steps: number; stepsTotal: number; codeFiles: number } }>(
         `projects/${projectId}/export${format === "html" ? "?format=html" : ""}`);
       const blob = format === "html" ? new Blob([r.html!], { type: "text/html;charset=utf-8" }) : new Blob([r.markdown!], { type: "text/markdown;charset=utf-8" });
       const url = URL.createObjectURL(blob);
@@ -266,7 +266,7 @@ function ExportButton({ projectId }: { projectId: string }) {
       a.download = r.filename;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setMsg(`${r.counts.wikiPages} pages, ${r.counts.steps} of ${r.counts.stepsTotal} steps${format === "html" ? ". It contains your project's history: read it before you share it." : ""}`);
+      setMsg(`${r.counts.wikiPages} pages, ${r.counts.steps} of ${r.counts.stepsTotal} steps, ${r.counts.codeFiles} code files${format === "html" ? ". It contains your project's history: read it before you share it." : ""}`);
     } catch (e) {
       setMsg((e as Error).message);
     } finally {

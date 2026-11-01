@@ -45,7 +45,7 @@ describe("how the AI built this", () => {
   it("tells an episode's process in plain language, from events only", () => {
     const ep = rebuildEpisodes(store, pid)[0]!.id;
     const h = howBuiltStep(store, pid, ep);
-    expect(h.scope).toBe("this episode");
+    expect(h.scope).toBe("this step");
     expect(h.stats).toMatchObject({ sessions: 1, prompts: 1, aiEdits: 2, tests: 1, testFailures: 1, notes: 2 });
     expect(h.entries.map((e) => e.text)).toContain("Ran: Run the tests");
     expect(h.entries[0]!.text).toBe("You asked: “Add a CSV parser and a docs page”");

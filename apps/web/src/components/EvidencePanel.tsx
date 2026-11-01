@@ -64,7 +64,7 @@ export function EvidencePanel({ projectId, eventId, onSelect, onClose, onEpisode
   if (e.rawRef) facts.push(["Raw record", <code>{e.rawRef}</code>]);
 
   return (
-    <aside className="panel" aria-label="Evidence">
+    <aside className="panel" aria-label="Source">
       <div className="panel-head">
         <Badge tone={tone({ type: e.eventType, outcome: outcome ?? p.status ?? null })}>{TYPE_LABEL[e.eventType] ?? e.eventType}</Badge>
         <h3>{e.summary}</h3>

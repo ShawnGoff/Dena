@@ -354,11 +354,11 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
 
     if (sub[0] === "episodes" && sub[2] === "explain" && method === "POST") {
       const unit = sub[1]!;
-      if (!loadEpisodes(store, p.id).some((e) => e.id === unit)) throw new HttpError(404, "No such episode");
+      if (!loadEpisodes(store, p.id).some((e) => e.id === unit)) throw new HttpError(404, "No such step");
       const model = body?.model ?? undefined;
       if (model !== undefined && (typeof model !== "string" || !MODEL_NAME.test(model))) throw new HttpError(400, "Invalid model name");
       const key = `${p.id}:${unit}`;
-      if (inFlight.has(key)) throw new HttpError(409, "This episode is already being explained");
+      if (inFlight.has(key)) throw new HttpError(409, "This step is already being explained");
       const controller = new AbortController();
       inFlight.set(key, controller);
       try {

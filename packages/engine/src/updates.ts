@@ -37,7 +37,7 @@ export function findOutdated(store: Store, projectId: string): Outdated[] {
     const lastWritten = revisions(store, projectId, "step", e.id).find((r) => r.origin === "generated")?.createdAt ?? rev.createdAt;
     const notes = notesFor(store, projectId, "step", e.id).filter((n) => n.createdAt > lastWritten).length;
     const waiting = packetMatches(packet, proposedRevision(store, projectId, "step", e.id)?.meta.packetHash);
-    out.push({ type: "step", key: e.id, title: `#${e.position} ${e.title}`, reason: waiting ? "an update is waiting for your review" : notes ? `${notes} new note${notes > 1 ? "s" : ""} from you` : "new evidence",
+    out.push({ type: "step", key: e.id, title: `#${e.position} ${e.title}`, reason: waiting ? "an update is waiting for your review" : notes ? `${notes} new note${notes > 1 ? "s" : ""} from you` : "new activity",
       userEdited: !!rev.meta.userEdited, chars: packet.chars, waiting });
   }
   for (const s of sectionKeys(store, projectId)) {
@@ -46,7 +46,7 @@ export function findOutdated(store: Store, projectId: string): Outdated[] {
     const brief = buildBrief(store, projectId, s.key);
     if (brief.hash === rev.meta.inputHash) continue;
     const waiting = proposedRevision(store, projectId, "wiki", s.key)?.meta.inputHash === brief.hash;
-    out.push({ type: "wiki", key: s.key, title: s.title, reason: waiting ? "an update is waiting for your review" : "new evidence", userEdited: !!rev.meta.userEdited, chars: brief.chars, waiting });
+    out.push({ type: "wiki", key: s.key, title: s.title, reason: waiting ? "an update is waiting for your review" : "new activity", userEdited: !!rev.meta.userEdited, chars: brief.chars, waiting });
   }
   return out;
 }

@@ -2,8 +2,8 @@ import { useState, type ReactNode } from "react";
 import type { Claim, ClaimKind } from "../api";
 
 export const KIND: Record<ClaimKind, { label: string; tone: string; help: string }> = {
-  observed: { label: "Observed", tone: "ok", help: "Shown directly by the cited evidence" },
-  inferred: { label: "Inferred", tone: "warn", help: "A reasonable conclusion from the evidence, not shown directly" },
+  observed: { label: "Observed", tone: "ok", help: "Shown directly by its sources" },
+  inferred: { label: "Inferred", tone: "warn", help: "A reasonable conclusion from its sources, not shown directly" },
   agent_stated: { label: "Agent said", tone: "accent", help: "The AI's own account of its reasoning; not verified" },
   owner_stated: { label: "You said", tone: "you", help: "Context you added; your account, not a record of events" },
   background: { label: "Background", tone: "muted", help: "General knowledge to help you understand; not a claim about this project" },
@@ -48,7 +48,7 @@ export function ClaimList({ claims, refs, flaggedByChecks, editable, onEdit, onM
                 <span className="claim-body">{c.text}</span>
                 {c.evidence.length > 0 && <span className="refs">{refs(c)}</span>}
                 {c.code && <CodeBlock code={c.code} />}
-                {c.edited && <span className="badge you" style={{ marginLeft: 6 }} title="You rewrote this statement; your words are not checked against evidence">edited by you</span>}
+                {c.edited && <span className="badge you" style={{ marginLeft: 6 }} title="You rewrote this statement; your words are not checked against the sources">edited by you</span>}
                 {c.flagged === "incorrect" && <span className="badge bad" style={{ marginLeft: 6 }}>you marked this incorrect</span>}
                 {flaggedByChecks?.has(c.text.slice(0, 80)) && <span className="badge bad" style={{ marginLeft: 6 }} title="Failed an automatic check; see Checks">check failed</span>}
                 {editable && (

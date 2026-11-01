@@ -25,9 +25,9 @@ type Section = "problems" | "components" | "decisions" | "concepts" | "questions
 const SECTIONS: { key: Section; label: string; help: string }[] = [
   { key: "problems", label: "Problems & fixes", help: "Test failures and what came after them, read from captured test runs." },
   { key: "components", label: "Components", help: "Parts of the project by folder, counted from captured file changes and commits." },
-  { key: "decisions", label: "Decisions", help: "Choices recorded in agent notes and in explained episodes, each with how it is known." },
-  { key: "concepts", label: "Concepts", help: "Terms defined while explaining episodes: general background, not claims about this project." },
-  { key: "questions", label: "Unknowns", help: "What the evidence could not show, as noted in explanations and agent notes." },
+  { key: "decisions", label: "Decisions", help: "Choices recorded in agent notes and in explained steps, each with how it is known." },
+  { key: "concepts", label: "Concepts", help: "Terms defined while explaining steps: general background, not claims about this project." },
+  { key: "questions", label: "Unknowns", help: "What the sources could not show, as noted in explanations and agent notes." },
 ];
 
 /**
@@ -51,7 +51,7 @@ export function Memory({ projectId, onEvent, onEpisode }: { projectId: string; o
     ) : null;
   };
   const evBtn = (id: number | null | undefined, label: string) =>
-    id != null ? <button key={`${label}-${id}`} className="ref" onClick={() => onEvent(id)} title="Open the evidence">{label}</button> : null;
+    id != null ? <button key={`${label}-${id}`} className="ref" onClick={() => onEvent(id)} title="See the source">{label}</button> : null;
   const count = (k: Section) => m[k].length;
   const sparse = (k: Section) => (k === "decisions" || k === "concepts" || k === "questions") && m.explainedEpisodes < 10;
 
@@ -151,7 +151,7 @@ export function Memory({ projectId, onEvent, onEpisode }: { projectId: string; o
         </div>
       ))}
 
-      {count(section) === 0 && <div className="empty"><b>Nothing here yet</b>{sparse(section) ? "Explain episodes in the Guide first." : "No captured activity of this kind."}</div>}
+      {count(section) === 0 && <div className="empty"><b>Nothing here yet</b>{sparse(section) ? "Explain steps in the Guide first." : "No captured activity of this kind."}</div>}
     </div>
   );
 }
@@ -159,6 +159,6 @@ export function Memory({ projectId, onEvent, onEpisode }: { projectId: string; o
 /** Turns "E8" mentions into buttons that open the events they referred to. */
 function withRefs(text: string, refs: Record<string, number[]>, onEvent: (id: number) => void) {
   return text.split(/(\bE\d+\b)/g).map((part, i) =>
-    refs[part]?.length ? <button key={i} className="ref" onClick={() => onEvent(refs[part]![0]!)} title="Open the evidence">{part}</button> : <span key={i}>{part}</span>,
+    refs[part]?.length ? <button key={i} className="ref" onClick={() => onEvent(refs[part]![0]!)} title="See the source">{part}</button> : <span key={i}>{part}</span>,
   );
 }

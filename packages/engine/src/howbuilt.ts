@@ -11,7 +11,7 @@ import { episodeEvents } from "./episodes.ts";
  */
 
 export interface HowBuilt {
-  /** What the counts cover, in words ("this episode", "files under src/", "the whole project"). */
+  /** What the counts cover, in words ("this step", "files under src/", "the whole project"). */
   scope: string;
   stats: { sessions: number; prompts: number; aiEdits: number; commands: number; tests: number; testFailures: number; commits: number; notes: number };
   entries: ActivityEntry[];
@@ -27,7 +27,7 @@ export function howBuiltStep(store: Store, projectId: string, unitId: string): H
   const log = activityForEvents(store, projectId, events, unitId);
   const entries = log.entries.filter((x) => DEFAULT_KINDS.includes(x.kind));
   return {
-    scope: "this episode",
+    scope: "this step",
     stats: { sessions: new Set(events.map((e) => e.sessionId).filter(Boolean)).size, prompts: log.stats.prompts, aiEdits: log.stats.edits, commands: log.stats.commands,
       tests: log.stats.tests, testFailures: log.stats.testFailures, commits: log.stats.commits, notes: log.stats.notes },
     entries: entries.slice(0, MAX_ENTRIES),

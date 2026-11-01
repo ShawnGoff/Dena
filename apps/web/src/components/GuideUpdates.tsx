@@ -70,11 +70,11 @@ export function GuideUpdates({ projectId }: { projectId: string }) {
           </span>
         </div>
       )}
-      {u.outdated.length === 0 && !u.waiting.length && !active && !u.waitingFromBefore && <p className="muted" style={{ margin: 0 }}>Everything written so far matches the captured evidence.</p>}
+      {u.outdated.length === 0 && !u.waiting.length && !active && !u.waitingFromBefore && <p className="muted" style={{ margin: 0 }}>Everything written so far matches what Dena recorded.</p>}
       {u.outdated.length > 0 && (
         <>
           <p className="muted" style={{ marginTop: 0 }}>
-            {u.outdated.length} written {u.outdated.length === 1 ? "item is" : "items are"} behind the evidence. Updating keeps every statement whose evidence did not change
+            {u.outdated.length} written {u.outdated.length === 1 ? "item is" : "items are"} behind the recorded activity. Updating keeps every statement whose sources did not change
             and sends only what changed, with <b>{u.settings.model ?? "your default model"}</b>: {tokenRange(u.tokens.low, u.tokens.high)} in total.
             Each update waits for your review before it is applied.
           </p>

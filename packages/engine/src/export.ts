@@ -82,7 +82,7 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
   const steps = episodes.map((e) => ({ e, rev: ensureDocRevision(store, projectId, "step", e.id) })).filter((x) => x.rev);
   if (steps.length) {
     h2("Walkthrough");
-    out.push(`${steps.length} of ${episodes.length} episodes are explained. Episodes not listed have not been explained yet.`);
+    out.push(`${steps.length} of ${episodes.length} steps are explained. Steps not listed have not been explained yet.`);
     for (const { e, rev } of steps) {
       const st = rev!.content as Record<string, any>;
       const evidence = (rev!.meta.evidence ?? {}) as Record<string, { eventIds: number[]; kind: string }>;
@@ -115,7 +115,7 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
       out.push("", "**How the AI built this**", "", howBuiltLine(howBuiltStep(store, projectId, e.id)));
       const cited = [...new Set(sections.flatMap(([k]) => ((st[k] ?? []) as Claim[]).flatMap((c) => c.evidence)))].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
       if (cited.length) {
-        out.push("", "<details><summary>Evidence</summary>", "");
+        out.push("", "<details><summary>Sources</summary>", "");
         for (const r of cited) if (evidence[r]) out.push(`- <a id="${prefix}-${r.toLowerCase()}"></a>**${r}** ${evidence[r]!.kind} — events ${evidence[r]!.eventIds.map((i) => `#${i}`).join(", ") || "(capture gap)"}`);
         out.push("", "</details>");
       }
@@ -140,7 +140,7 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
   const concepts = of("concept").sort((a, b) => a.title.localeCompare(b.title));
   if (concepts.length) {
     h2("Glossary");
-    out.push("General background written while explaining episodes; not claims about this project.", "");
+    out.push("General background written while explaining steps; not claims about this project.", "");
     for (const c of concepts) out.push(`- **${c.title}** — ${(c.data as any).explanation}`);
   }
   const unknowns = of("question");
@@ -152,8 +152,8 @@ export function exportGuideMarkdown(store: Store, projectId: string, opts: { gen
   const date = opts.generatedAt ?? new Date().toISOString();
   const head = [
     `# ${project.name}: how it got built`, "",
-    `> **Written by AI from captured project evidence, with the owner's corrections. It can be wrong.** Statements are labeled: **✓ Observed** (shown by the evidence), **~ Inferred** (a reasonable conclusion), **💬 Agent said** (the AI's own account), **🗣 You said** (the owner's context), **📘 Background** (general knowledge). References point to captured events (#123) kept in Dena.`,
-    "", `*Exported from Dena on ${date.slice(0, 16).replace("T", " ")} UTC · ${episodes.length} episodes, ${steps.length} explained · ${pages.length} wiki pages written*`,
+    `> **Written by AI from what Dena recorded of the project, with the owner's corrections. It can be wrong.** Statements are labeled: **✓ Observed** (shown by its sources), **~ Inferred** (a reasonable conclusion), **💬 Agent said** (the AI's own account), **🗣 You said** (the owner's context), **📘 Background** (general knowledge). References point to captured events (#123) kept in Dena.`,
+    "", `*Exported from Dena on ${date.slice(0, 16).replace("T", " ")} UTC · ${episodes.length} steps, ${steps.length} explained · ${pages.length} wiki pages written*`,
     ...(standingLimitations(store, projectId).length
       ? ["", "**About this guide.** What Dena could not capture, true for the whole project:", "", ...standingLimitations(store, projectId).map((l) => `- ${l}`),
         "- Changes the file watcher or git saw have no recorded author; where Dena connects them to the AI, that is marked as likely, not certain."]

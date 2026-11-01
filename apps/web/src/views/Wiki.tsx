@@ -52,7 +52,7 @@ export function Wiki({ projectId, page, onPage, onEvent, onEpisode, onFile, onMe
   const navItem = (p: PageInfo) => (
     <button key={p.key} className={`toc-item ${p.key === current ? "active" : ""}`} onClick={() => onPage(p.key)} style={{ gridTemplateColumns: "1fr auto" }}>
       <span className={`toc-title ${p.key.startsWith("component:") ? "mono" : ""}`}>{LABEL(p.key)}</span>
-      {p.generated && <span className="toc-done" style={{ color: p.stale ? "var(--warn)" : "var(--ok)" }} title={p.stale ? "Outdated: new evidence since it was written" : "Written"}>●</span>}
+      {p.generated && <span className="toc-done" style={{ color: p.stale ? "var(--warn)" : "var(--ok)" }} title={p.stale ? "Outdated: new activity since it was written" : "Written"}>●</span>}
     </button>
   );
   return (
@@ -66,7 +66,7 @@ export function Wiki({ projectId, page, onPage, onEvent, onEpisode, onFile, onMe
         {comps.map(navItem)}
         <div className="side-label" style={{ marginTop: 14 }}>Built from facts</div>
         <button className="toc-item" style={{ gridTemplateColumns: "1fr" }} onClick={onMemory}><span>Problems, decisions, concepts →</span></button>
-        <button className="toc-item" style={{ gridTemplateColumns: "1fr" }} onClick={onWalkthrough}><span>Episode walkthrough →</span></button>
+        <button className="toc-item" style={{ gridTemplateColumns: "1fr" }} onClick={onWalkthrough}><span>Step-by-step walkthrough →</span></button>
         <div className="side-label" style={{ marginTop: 14 }}>Share</div>
         <ExportButton projectId={projectId} />
       </nav>
@@ -168,7 +168,7 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
       {!doc.active && !tutorial && (
         <div className="explain-card">
           <h2 className="step-title" style={{ marginTop: 0 }}>{LABEL(pageKey)}</h2>
-          <p className="muted">Not written yet. Dena will send {r.brief.sources} sources (facts counted from events, claims from explained episodes, and the project's own files):
+          <p className="muted">Not written yet. Dena will send {r.brief.sources} sources (facts counted from events, claims from explained steps, and the project's own files):
             {tokenRange(r.brief.tokens.low, r.brief.tokens.high)} (the high end if the checks ask for a repair).
             <span className="faint small" style={{ display: "block", marginTop: 4 }}>Token estimate {r.brief.tokens.calibrated ? "" : "uses "}{r.brief.tokens.basis}.</span></p>
           <span className="row">
@@ -183,8 +183,8 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
         <article className="step">
           <h2 className="step-title">{s.section.title}</h2>
           <div className="ai-notice">
-            <b>Written by AI from captured evidence. It can be wrong.</b> Each statement is labeled and cites sources like <span className="ref static">S3</span>.
-            A source is a <b>fact</b> Dena counted from captured events, a <b>claim</b> from an episode's explanation, or text from the project's own <b>files</b>; each lists the events or file behind it.
+            <b>Written by AI from what Dena recorded. It can be wrong.</b> Each statement is labeled and cites sources like <span className="ref static">S3</span>.
+            A source is a <b>fact</b> Dena counted from captured events, a <b>claim</b> from a step's explanation, or text from the project's own <b>files</b>; each lists the events or file behind it.
           </div>
           <p className="step-summary">{s.section.summary}</p>
           {s.section.sections.map((sec) => (
@@ -226,11 +226,11 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
                 <span className="ref static">{x.ref}</span>
                 <span>
                   <Badge tone={x.type === "fact" || (x.type === "code" && x.grade === "observed") ? "ok" : KIND[x.grade].tone}>{sourceBadge(x)}</Badge> <SourceText text={x.text} />
-                  <span className="refs">{x.eventIds.slice(0, 6).map((id, i) => <button key={id} className="ref" onClick={() => onEvent(id)} title="Open the evidence">ev {i + 1}</button>)}</span>
+                  <span className="refs">{x.eventIds.slice(0, 6).map((id, i) => <button key={id} className="ref" onClick={() => onEvent(id)} title="See the source">ev {i + 1}</button>)}</span>
                   {x.files?.map((f) => isCode(f)
                     ? <button key={f} className="chip" style={{ marginLeft: 6 }} onClick={() => onFile(f)} title="Open this file's explainer">{f}</button>
                     : <code key={f} className="small" style={{ marginLeft: 6 }}>{f}</code>)}
-                  {x.unitId && <button className="chip" style={{ marginLeft: 6 }} onClick={() => onEpisode(x.unitId!)}>episode</button>}
+                  {x.unitId && <button className="chip" style={{ marginLeft: 6 }} onClick={() => onEpisode(x.unitId!)}>step</button>}
                 </span>
               </div>
             ))}
@@ -266,7 +266,7 @@ function ExportButton({ projectId }: { projectId: string }) {
       a.download = r.filename;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setMsg(`${r.counts.wikiPages} pages, ${r.counts.steps} of ${r.counts.stepsTotal} episodes${format === "html" ? ". It contains your project's history: read it before you share it." : ""}`);
+      setMsg(`${r.counts.wikiPages} pages, ${r.counts.steps} of ${r.counts.stepsTotal} steps${format === "html" ? ". It contains your project's history: read it before you share it." : ""}`);
     } catch (e) {
       setMsg((e as Error).message);
     } finally {

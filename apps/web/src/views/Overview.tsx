@@ -30,7 +30,7 @@ export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId
         <div className="card stat"><b>{total.toLocaleString()}</b><span>events captured</span></div>
         <div className="card stat"><b>{count("prompt_submitted")}</b><span>prompts across {o.stats.sessions} sessions</span></div>
         <div className="card stat"><b>{count("git_commit")}</b><span>commits · {count("test_result")} test runs</span></div>
-        <div className="card stat"><b>{o.episodes.explained}<span className="faint" style={{ fontSize: 16 }}> / {o.episodes.total}</span></b><span>episodes explained</span></div>
+        <div className="card stat"><b>{o.episodes.explained}<span className="faint" style={{ fontSize: 16 }}> / {o.episodes.total}</span></b><span>steps explained</span></div>
       </div>
       <div className="section-gap" />
       <GuideUpdates projectId={projectId} />
@@ -77,8 +77,8 @@ export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId
       <div className="section-gap" />
       <div className="grid cols-2">
         <div className="card">
-          <h2>Latest episodes</h2>
-          {o.episodes.latest.length === 0 && <p className="muted">Open the Timeline to group activity into episodes.</p>}
+          <h2>Latest steps</h2>
+          {o.episodes.latest.length === 0 && <p className="muted">Open the Timeline to group activity into steps.</p>}
           {o.episodes.latest.map((e) => (
             <div key={e.id} className="link-row" onClick={() => onEpisode(e.id)}>
               <span className="faint mono" style={{ minWidth: 30 }}>#{e.position}</span>

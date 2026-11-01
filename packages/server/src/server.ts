@@ -388,8 +388,8 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     if (sub[0] === "wiki" && sub.length === 1 && method === "GET") {
       return sectionKeys(store, p.id).map((s) => {
         const brief = buildBrief(store, p.id, s.key);
-        const stored = storedSection(store, p.id, s.key, brief.hash);
-        return { ...s, sources: brief.sources.length, chars: brief.chars, generated: !!stored, stale: stored?.stale ?? false, model: stored?.model ?? null };
+        const active = ensureDocRevision(store, p.id, "wiki", s.key); // what the page shows, which may be restored or edited
+        return { ...s, sources: brief.sources.length, chars: brief.chars, generated: !!active, stale: !!active && active.meta.inputHash !== brief.hash, model: active?.meta.model ?? null };
       });
     }
 
@@ -652,6 +652,8 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
           inFlight.delete(flight);
         }
       }
+      if (["edit", "restore", "adopt", "decline"].includes(action) && inFlight.has(type === "step" ? `${p.id}:${key}` : `${p.id}:wiki:${key}`))
+        throw new HttpError(409, "This is being written right now. Wait for it to finish (or press Stop), then try again.");
       try {
         if (action === "edit") {
           const parsed = (type === "step" ? Step : WikiSection).safeParse(body?.content);

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Store } from "@dena/core";
 import { FsCapture } from "../src/fs/watcher.ts";
-import { addPausedWindow, Recorder, withoutPaused } from "../src/recorder.ts";
+import { addPausedWindow, pausedWindows, Recorder, withoutPaused } from "../src/recorder.ts";
 
 let home: string;
 let root: string;
@@ -42,6 +42,18 @@ describe("pausing is private", () => {
     expect(batch.events.map((e) => e.sourceEventId)).toEqual(["before", "after"]);
     expect(batch.links).toEqual([{ fromSourceEventId: "after", toSourceEventId: "before" }]);
     expect(batch.artifacts).toEqual([{ sourceEventId: "after" }]);
+  });
+
+  it("is private from the moment pause is pressed, before the recorder notices", () => {
+    store.setRecordingState(pid, "recording");
+    store.setRecordingState(pid, "paused");
+    const open = pausedWindows(store, pid);
+    expect(open).toHaveLength(1);
+    const during = new Date().toISOString();
+    expect(withoutPaused(store, pid, { events: [ev("now", during)], links: [], artifacts: [] }).events).toHaveLength(0);
+    addPausedWindow(store, pid, { from: open[0]!.from, to: during }); // closing it keeps only the finished window
+    store.setCursor(pid, "dena", "paused_at", "");
+    expect(pausedWindows(store, pid)).toEqual([{ from: open[0]!.from, to: during }]);
   });
 
   it("after a pause, takes the folder as it is without recording what changed meanwhile", () => {

@@ -59,6 +59,8 @@ export function DocBar<C>({ projectId, type, docKey, doc, onChanged, viewing, on
     setErr(null);
     try {
       await api(`projects/${projectId}/doc/${action}`, { method: "POST", body: { type, key: docKey, ...body } });
+      // Restoring or adopting the version on screen makes it the current one: show it as such.
+      if (action === "restore" || action === "adopt" || action === "decline") onView(null);
       onChanged();
     } catch (e) {
       setErr((e as Error).message);
@@ -100,7 +102,7 @@ export function DocBar<C>({ projectId, type, docKey, doc, onChanged, viewing, on
       )}
       {doc.proposed && !doc.proposed.meta.targeted && (
         <div className="notice proposal">
-          <b>An AI update is waiting.</b> It was written from newer activity while your edited version was showing, so your version stays until you choose.
+          <b>An AI update is waiting.</b> It was written from newer activity while your own version (edited or restored) was showing, so yours stays until you choose.
           <span className="row">
             <button className="btn" onClick={() => onView(viewing === doc.proposed!.id ? null : doc.proposed!.id)}>{viewing === doc.proposed.id ? "Back to your version" : "Show the AI update"}</button>
             <button className="btn primary" disabled={busy} onClick={() => post("adopt", { id: doc.proposed!.id })}>Use the AI update</button>

@@ -182,14 +182,30 @@ export interface LatestExplanation {
   model: string | null;
 }
 
+/**
+ * Each explained step as the owner sees it: its active revision (which may be restored or hold
+ * their edits), or the stored explanation for a step written before revision history existed.
+ * An AI rewrite still waiting for review is not used.
+ */
 export function latestExplanations(store: Store, projectId: string): LatestExplanation[] {
-  const rows = store.db
+  const active = store.db
+    .prepare(`SELECT doc_key unit_id, content_json, meta_json FROM doc_revision WHERE project_id = ? AND doc_type = 'step' AND status = 'active'`)
+    .all(projectId) as { unit_id: string; content_json: string; meta_json: string }[];
+  const fromRevisions = new Set(active.map((r) => r.unit_id));
+  const legacy = (store.db
     .prepare(`SELECT unit_id, content_json, evidence_json, model FROM explanation e
               WHERE project_id = ? AND id = (SELECT MAX(id) FROM explanation x WHERE x.project_id = e.project_id AND x.unit_id = e.unit_id)`)
-    .all(projectId) as { unit_id: string; content_json: string; evidence_json: string; model: string | null }[];
+    .all(projectId) as { unit_id: string; content_json: string; evidence_json: string; model: string | null }[]).filter((r) => !fromRevisions.has(r.unit_id));
+  const rows = [
+    ...active.map((r) => {
+      const meta = JSON.parse(r.meta_json);
+      return { unitId: r.unit_id, content: r.content_json, evidence: meta.evidence ?? {}, model: meta.model ?? null };
+    }),
+    ...legacy.map((r) => ({ unitId: r.unit_id, content: r.content_json, evidence: JSON.parse(r.evidence_json), model: r.model })),
+  ];
   return rows.flatMap((r) => {
-    const parsed = Step.safeParse(JSON.parse(r.content_json));
-    return parsed.success ? [{ unitId: r.unit_id, step: parsed.data, evidence: JSON.parse(r.evidence_json), model: r.model }] : [];
+    const parsed = Step.safeParse(JSON.parse(r.content));
+    return parsed.success ? [{ unitId: r.unitId, step: parsed.data, evidence: r.evidence, model: r.model }] : [];
   });
 }
 
@@ -305,7 +321,9 @@ function fingerprint(store: Store, projectId: string): string {
   const e = store.db.prepare("SELECT MAX(id) m, COUNT(*) n FROM event WHERE project_id = ?").get(projectId) as { m: number | null; n: number };
   const x = store.db.prepare("SELECT MAX(id) m FROM explanation WHERE project_id = ?").get(projectId) as { m: number | null };
   const u = store.db.prepare("SELECT COUNT(*) n FROM work_unit WHERE project_id = ?").get(projectId) as { n: number };
-  return `v${MEMORY_VERSION}.${TEST_RULES_VERSION}:${e.m ?? 0}:${e.n}:${x.m ?? 0}:${u.n}`;
+  // Restores and edits change what a step says without a new explanation.
+  const r = store.db.prepare("SELECT MAX(id) m FROM doc_revision WHERE project_id = ? AND doc_type = 'step' AND status = 'active'").get(projectId) as { m: number | null };
+  return `v${MEMORY_VERSION}.${TEST_RULES_VERSION}:${e.m ?? 0}:${e.n}:${x.m ?? 0}:${u.n}:${r.m ?? 0}`;
 }
 
 /** Rebuilds memory if events, explanations or episodes changed since the last build. */

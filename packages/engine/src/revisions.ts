@@ -45,11 +45,13 @@ export function activeRevision(store: Store, projectId: string, type: DocType, k
   return r ? row(r) : null;
 }
 
-/** An AI update waiting for the owner, if it is newer than the active version. */
+/**
+ * An AI update waiting for the owner. It keeps waiting through the owner's edits and restores,
+ * and ends only when adopted, declined, or replaced by a newer AI version.
+ */
 export function proposedRevision(store: Store, projectId: string, type: DocType, key: string): Revision | null {
-  const active = activeRevision(store, projectId, type, key);
-  const r = store.db.prepare("SELECT * FROM doc_revision WHERE project_id = ? AND doc_type = ? AND doc_key = ? AND status = 'proposed' AND id > ? ORDER BY id DESC LIMIT 1")
-    .get(projectId, type, key, active?.id ?? 0);
+  const r = store.db.prepare("SELECT * FROM doc_revision WHERE project_id = ? AND doc_type = ? AND doc_key = ? AND status = 'proposed' ORDER BY id DESC LIMIT 1")
+    .get(projectId, type, key);
   return r ? row(r) : null;
 }
 
@@ -58,7 +60,8 @@ function insert(store: Store, projectId: string, type: DocType, key: string, r: 
   return store.db.transaction(() => {
     if (r.status === "active")
       store.db.prepare("UPDATE doc_revision SET status = 'superseded' WHERE project_id = ? AND doc_type = ? AND doc_key = ? AND status = 'active'").run(projectId, type, key);
-    if (r.status === "proposed")
+    // A newer AI version (waiting or shown) replaces one still waiting; the owner's edits do not.
+    if (r.status === "proposed" || r.origin === "generated")
       store.db.prepare("UPDATE doc_revision SET status = 'superseded' WHERE project_id = ? AND doc_type = ? AND doc_key = ? AND status = 'proposed'").run(projectId, type, key);
     const info = store.db
       .prepare("INSERT INTO doc_revision (project_id, doc_type, doc_key, origin, status, content_json, meta_json, base_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -73,9 +76,10 @@ function insert(store: Store, projectId: string, type: DocType, key: string, r: 
  */
 export function recordGenerated(store: Store, projectId: string, type: DocType, key: string, content: unknown, meta: Record<string, any>): Revision {
   const active = activeRevision(store, projectId, type, key);
-  const protect = !!active?.meta.userEdited;
+  // A version the owner restored is their choice too, including one restored while this was being written.
+  const protect = !!active?.meta.userEdited || active?.origin === "restored";
   return insert(store, projectId, type, key, { origin: "generated", status: protect ? "proposed" : "active", content, meta: { ...meta, userEdited: false },
-    baseId: active?.id ?? null, note: protect ? "AI update written while your edited version was active" : null });
+    baseId: active?.id ?? null, note: protect ? `AI update written while your ${active!.origin === "restored" ? "restored" : "edited"} version was active` : null });
 }
 
 /**
@@ -113,6 +117,8 @@ export function declineProposed(store: Store, projectId: string, type: DocType, 
 export function restoreRevision(store: Store, projectId: string, type: DocType, key: string, id: number): Revision {
   const r = revisions(store, projectId, type, key).find((x) => x.id === id);
   if (!r) throw new Error("No such revision");
+  // Restoring a waiting AI update takes it out of the waiting state.
+  if (r.status === "proposed") store.db.prepare("UPDATE doc_revision SET status = 'superseded' WHERE id = ?").run(id);
   return insert(store, projectId, type, key, { origin: "restored", status: "active", content: r.content, meta: { ...r.meta }, baseId: id,
     note: `Restored the version from ${r.createdAt.slice(0, 16).replace("T", " ")} UTC` });
 }

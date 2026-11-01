@@ -93,7 +93,7 @@ export function recoverJobs(store: Store): number {
 
 /** Sign-in, billing and missing-evidence failures will not fix themselves; everything else is retried. */
 export function isRetryable(message: string): boolean {
-  return !/not signed in|credit balance|no valid api key|no captured evidence|no such|could not find claude code/i.test(message);
+  return !/not signed in|credit balance|no valid api key|no captured evidence|has not recorded anything|has no evidence|no such|could not find claude code/i.test(message);
 }
 
 export const RETRY_DELAYS_MS = [10_000, 60_000];

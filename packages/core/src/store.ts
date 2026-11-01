@@ -113,6 +113,9 @@ export class Store {
   }
 
   setRecordingState(projectId: string, state: Project["recordingState"]): void {
+    // A pause is private from the moment it is asked for, not from when the recorder next notices it.
+    if (state === "paused" && this.getProject(projectId)?.recordingState === "recording" && !this.getCursor(projectId, "dena", "paused_at"))
+      this.setCursor(projectId, "dena", "paused_at", new Date().toISOString());
     this.db
       .prepare("UPDATE project SET recording_state = ?, updated_at = ? WHERE id = ?")
       .run(state, new Date().toISOString(), projectId);

@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { createTwoFilesPatch, structuredPatch } from "diff";
+import { withoutPaused } from "../paused.ts";
 import {
   DEFAULT_EXCLUDED_DIRS,
   isSensitivePath,
@@ -268,7 +269,7 @@ export class FsCapture {
   private ingest(batch: IngestBatch): void {
     if (batch.events.length) {
       if (this.sessionId) batch.sessions.push({ id: this.sessionId, source: SOURCE, startedAt: null, endedAt: new Date().toISOString() });
-      this.store.ingest(this.projectId, batch);
+      this.store.ingest(this.projectId, withoutPaused(this.store, this.projectId, batch)); // a change in the moment before a pause took hold
       this.opts.onIngest?.(batch.events.map((e) => e.summary));
     }
     for (const [rel, s] of this.stagedState) {

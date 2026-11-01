@@ -67,6 +67,16 @@ leads back to events or a file.
 one separately. Explanations are stored under a fingerprint of the code, so after a change only
 the functions whose code changed are explained again.
 
+How a file is split depends on its language:
+
+- **TypeScript and JavaScript**: read with the TypeScript compiler, so every function, class, method and type is found exactly.
+- **C, C++, C#, Objective-C, Java, Kotlin, Scala, Groovy, Swift, Go, Rust, Zig, Dart, PHP, Solidity, Perl, PowerShell, R, shell scripts, Arduino and shaders (HLSL, GLSL, Godot, Unity)**: split by their braces into classes (shown without their methods' bodies), methods and functions.
+- **Python, GDScript and Nim**: split by indentation.
+- **Ruby, Crystal, Lua, Julia and Elixir**: split at each top-level definition and its `end`. Elixir modules are explained whole.
+- **Everything else**: Haskell, OCaml, F#, Clojure, Erlang, Elm, Visual Basic, Pascal, Fortran, assembly, SQL, HTML, CSS and similar files are explained whole, or in parts of about 150 lines.
+
+Code outside any function (imports, constants, top-level statements) becomes one "imports and setup" part. Apart from TypeScript and JavaScript, the splitting reads the code's shape rather than fully parsing it, so unusual code may be split less neatly; nothing is lost when that happens, it is only grouped differently.
+
 **How the AI built this** and the **Activity** log are not written by a model at all: they are told
 from the events.
 

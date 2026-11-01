@@ -68,6 +68,20 @@ describe("hook forwarder", () => {
     expect(outside.stdout).toBe("");
   });
 
+  it("reminds the agent to note its reasons after a commit with no note since the last one", () => {
+    store.setRecordingState(pid, "recording");
+    const bash = (command: string) =>
+      runHook({ hook_event_name: "PostToolUse", session_id: "s", cwd: root, tool_name: "Bash", tool_use_id: command, tool_input: { command } }, { CLAUDE_PROJECT_DIR: root }).stdout;
+    const reminder = (out: string) => (out ? JSON.parse(out).hookSpecificOutput.additionalContext as string : "");
+    expect(reminder(bash("npm test"))).toBe("");
+    expect(reminder(bash("cat > t.ts <<'EOF'\nrun('git add -A && git commit -m x');\nEOF"))).toBe(""); // only mentioned in a heredoc
+    expect(reminder(bash('echo "then git commit"'))).toBe("");
+    expect(reminder(bash('git commit -m "Add parser"'))).toContain("no note was recorded");
+    expect(reminder(bash(`node ${HOOK_SCRIPT} note decision <<'NOTE'\nUsed a state machine for quoting.\nNOTE`))).toBe("");
+    expect(reminder(bash("git add -A && git commit -q -m next"))).toBe(""); // noted since the last commit
+    expect(reminder(bash("git -C . commit --amend --no-edit"))).toContain("no note was recorded"); // nothing new since then
+  });
+
   it("stops capturing when paused", () => {
     store.setRecordingState(pid, "recording");
     store.setRecordingState(pid, "paused");

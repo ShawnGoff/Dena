@@ -38,7 +38,7 @@ export function Timeline({ projectId, refresh, openEpisode, selectedEvent, onEve
     <div className="page">
       <div className="toolbar">
         <span className="muted">{eps.length} episodes</span>
-        <label className="toggle"><input type="checkbox" checked={onlyChanges} onChange={(e) => setOnlyChanges(e.target.checked)} /> only episodes with changes</label>
+        <label className="toggle"><input type="checkbox" checked={onlyChanges} onChange={(e) => setOnlyChanges(e.target.checked)} /> only steps with changes</label>
         <label className="toggle"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> show every event</label>
         <span style={{ marginLeft: "auto" }} />
         <button className="btn" onClick={() => setOpen(new Set())}>Collapse all</button>

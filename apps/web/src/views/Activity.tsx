@@ -59,9 +59,9 @@ export function Activity({ projectId, onEvent }: { projectId: string; onEvent: (
   if (!sessions.length) return <div className="empty"><b>No AI activity yet</b>Start recording, or import past Claude Code sessions.</div>;
   const kinds = new Set(FILTERS.filter((f) => on.has(f.label)).flatMap((f) => f.kinds));
   const visible = s?.entries.filter((x) => kinds.has(x.kind)) ?? [];
-  // Busiest kinds first, so the filters read in order of how much of the session they cover.
+  // Busiest kinds first, so the filters read in order of how much of the session they cover; the ones off by default go last.
   const tally = (f: (typeof FILTERS)[number]) => s?.entries.reduce((n, x) => n + (f.kinds.includes(x.kind) ? x.count : 0), 0) ?? 0;
-  const ordered = [...FILTERS].sort((a, b) => tally(b) - tally(a));
+  const ordered = [...FILTERS].sort((a, b) => Number(OFF_BY_DEFAULT.has(a.label)) - Number(OFF_BY_DEFAULT.has(b.label)) || tally(b) - tally(a));
   const toggle = (l: string) => setOn((prev) => {
     const n = new Set(prev);
     n.has(l) ? n.delete(l) : n.add(l);

@@ -70,25 +70,25 @@ export function DocBar<C>({ projectId, type, docKey, doc, onChanged, viewing, on
 
   return (
     <div className="docbar">
-      {updating && <BusyBar what="Updating with the new evidence" onStop={stop} stopping={stopping} />}
+      {updating && <BusyBar what="Updating with the new activity" onStop={stop} stopping={stopping} />}
       {err && <div className={err.startsWith("Stopped") ? "notice" : "error"}>{err}</div>}
       {doc.stale && !doc.proposed && viewing == null && doc.update && (
         <div className="notice update-offer">
-          <b>New evidence{doc.notes.some((n) => n.status === "open") ? " or your notes" : ""} arrived since this was written.</b>{" "}
+          <b>New activity{doc.notes.some((n) => n.status === "open") ? " or your notes" : ""} arrived since this was written.</b>{" "}
           {doc.update.needsModel
-            ? <>A targeted update keeps the {doc.update.kept} {doc.update.kept === 1 ? "statement" : "statements"} whose evidence did not change{doc.update.review ? `, re-checks the ${doc.update.review} whose evidence changed,` : ""} and adds what is new. It sends {doc.update.send} of {doc.update.of} {type === "step" ? "evidence items" : "sources"}{doc.update.estimate ? `: ${tokenRange(doc.update.estimate.low, doc.update.estimate.high)}` : ""}.
+            ? <>A targeted update keeps the {doc.update.kept} {doc.update.kept === 1 ? "statement" : "statements"} whose sources did not change{doc.update.review ? `, re-checks the ${doc.update.review} whose sources changed,` : ""} and adds what is new. It sends {doc.update.send} of {doc.update.of} {type === "step" ? "sources" : "sources"}{doc.update.estimate ? `: ${tokenRange(doc.update.estimate.low, doc.update.estimate.high)}` : ""}.
               You will see what it adds, changes and removes before anything is applied.</>
             : <>Only facts Dena counts itself changed, so no model is needed. You will see the changes before they are applied.</>}
           <span className="row" style={{ marginTop: 8 }}>
             {doc.update.needsModel && <ModelChoice value={runModel} onChange={setRunModel} projectDefault={projectModel ?? null} />}
-            <button className="btn primary" disabled={updating || doc.busy} onClick={update}>Update with new evidence</button>
-            {onRewrite && <button className="btn" disabled={updating || doc.busy} onClick={onRewrite} title="Write the whole document again from all the evidence">Rewrite from scratch</button>}
+            <button className="btn primary" disabled={updating || doc.busy} onClick={update}>Update with new activity</button>
+            {onRewrite && <button className="btn" disabled={updating || doc.busy} onClick={onRewrite} title="Write the whole document again from all its sources">Rewrite from scratch</button>}
           </span>
         </div>
       )}
       {doc.proposed?.meta.targeted && (
         <div className="notice proposal">
-          <b>An update from new evidence is ready for review.</b> Statements whose evidence did not change were kept as they are{doc.proposed.meta.userEdited ? ", including yours" : ""}.
+          <b>An update from new activity is ready for review.</b> Statements whose sources did not change were kept as they are{doc.proposed.meta.userEdited ? ", including yours" : ""}.
           <UpdateDiffView diff={doc.proposed.meta.diff} type={type} />
           <span className="row">
             <button className="btn" onClick={() => onView(viewing === doc.proposed!.id ? null : doc.proposed!.id)}>{viewing === doc.proposed.id ? "Back to the current version" : "Show it in full"}</button>
@@ -100,7 +100,7 @@ export function DocBar<C>({ projectId, type, docKey, doc, onChanged, viewing, on
       )}
       {doc.proposed && !doc.proposed.meta.targeted && (
         <div className="notice proposal">
-          <b>An AI update is waiting.</b> It was written from newer evidence while your edited version was showing, so your version stays until you choose.
+          <b>An AI update is waiting.</b> It was written from newer activity while your edited version was showing, so your version stays until you choose.
           <span className="row">
             <button className="btn" onClick={() => onView(viewing === doc.proposed!.id ? null : doc.proposed!.id)}>{viewing === doc.proposed.id ? "Back to your version" : "Show the AI update"}</button>
             <button className="btn primary" disabled={busy} onClick={() => post("adopt", { id: doc.proposed!.id })}>Use the AI update</button>
@@ -115,7 +115,7 @@ export function DocBar<C>({ projectId, type, docKey, doc, onChanged, viewing, on
 
       {allowContext && (
         <div className="context-box">
-          <div className="small"><b>Add context</b> <span className="faint">— something the capture could not see (why you chose something, what you meant). It is used the next time this episode is explained, labeled "You said".</span></div>
+          <div className="small"><b>Add context</b> <span className="faint">— something the capture could not see (why you chose something, what you meant). It is used the next time this step is explained, labeled "You said".</span></div>
           <textarea rows={2} value={context} onChange={(e) => setContext(e.target.value)} placeholder="e.g. We kept split(',') on purpose for the prototype; quoting came later." />
           <span className="row"><button className="btn" disabled={busy || !context.trim()} onClick={async () => { await post("note", { kind: "context", text: context.trim() }); setContext(""); }}>Add</button></span>
         </div>
@@ -129,7 +129,7 @@ export function DocBar<C>({ projectId, type, docKey, doc, onChanged, viewing, on
               <button className="close" title="Remove this note" onClick={() => post("dismiss-note", { id: n.id })}>×</button>
             </div>
           ))}
-          {type === "step" && doc.stale && <div className="faint small">Your notes are used when this episode is next explained ("Update with new evidence").</div>}
+          {type === "step" && doc.stale && <div className="faint small">Your notes are used when this step is next explained ("Update with new activity").</div>}
         </div>
       )}
 
@@ -174,7 +174,7 @@ export function UpdateDiffView({ diff, type }: { diff: Diff; type: "step" | "wik
     <div className="diff-view">
       <div className="faint small">
         {diff.kept} kept · {diff.added.length} added · {diff.changed.length} changed · {diff.removed.length} removed
-        {diff.sent.items ? ` · sent ${diff.sent.items} of ${diff.sent.of} ${type === "step" ? "evidence items" : "sources"}` : " · no model call"}
+        {diff.sent.items ? ` · sent ${diff.sent.items} of ${diff.sent.of} ${type === "step" ? "sources" : "sources"}` : " · no model call"}
       </div>
       {nothing && <p className="muted small">No statements change; only Dena's own counts were refreshed.</p>}
       {diff.title && <div className="diff-row changed"><span className="diff-tag">Title</span><span><del>{diff.title.before}</del> → {diff.title.after}</span></div>}

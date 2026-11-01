@@ -47,7 +47,7 @@ export const CONFIDENCE_HELP: Record<string, string> = {
 export const STRENGTH_HELP: Record<string, string> = {
   observed: "The source itself records this connection",
   inferred: "Concluded from several signals; plausible, not proven",
-  weak: "Only happened around the same time; not evidence of cause",
+  weak: "Only happened around the same time; doesn't show one caused the other",
 };
 
 /** 4300 → "4.3k", 14200 → "14k". */

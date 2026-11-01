@@ -32,13 +32,13 @@ const USAGE = `dena <command>
   hooks status|install|uninstall <project> [--scope project|user] [--yes]
                                  live Claude Code capture; shows the change first, writes only with --yes
   ingest-hooks <project>         process hook calls collected while not recording
-  episodes <project>             group activity into episodes (rebuilt from events)
-  packet <project> <episode>     show exactly what evidence would be sent to the model
-  explain <project> <episode> [--force] [--model M] [--depth concise|thorough] [--out FILE]
-                                 explain one episode (cached; episodes with no changes need no model)
-                                 <episode> is a number from "episodes", an ep_ id, or "last"
+  steps <project>                group activity into steps (rebuilt from events)
+  packet <project> <step>        show exactly what would be sent to the model
+  explain <project> <step> [--force] [--model M] [--depth concise|thorough] [--out FILE]
+                                 explain one step (cached; steps with no changes need no model)
+                                 <step> is a number from "steps", an ep_ id, or "last"
   guide build <project> [--from N] [--to N] [--model M] [--depth D] [--max-usd X] [--yes]
-                                 explain many episodes in as few calls as possible; shows an estimate first
+                                 explain many steps in as few calls as possible; shows an estimate first
   memory <project> [--rebuild]   project memory: components, problems and fixes, decisions, concepts, unknowns
   wiki <project> [section] [--model M] [--force] [--out FILE]
                                  list the wiki pages, or write one (overview, product, tutorial, architecture,
@@ -232,6 +232,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         console.log(JSON.stringify(r));
         break;
       }
+      case "steps":
       case "episodes": {
         const p = project(store, args[0]);
         const eps = rebuildEpisodes(store, p.id);
@@ -253,7 +254,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         }
         const ref = args[1] ?? "last";
         const ep = ref === "last" ? eps[eps.length - 1] : eps.find((e) => e.id === ref || String(e.position) === ref);
-        if (!ep) throw new Error(`No episode "${ref}". Run: dena episodes ${p.name}`);
+        if (!ep) throw new Error(`No step "${ref}". Run: dena steps ${p.name}`);
         const depth = (flag("depth") ?? store.projectSettings(p.id).depth) as Depth;
         if (cmd === "packet") {
           const pk = buildPacket(store, p.id, ep.id, { depth });
@@ -284,9 +285,9 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         const est = estimate(store, p.id, ids, o);
         const s = store.projectSettings(p.id);
         const maxUsd = flag("max-usd") ? Number(flag("max-usd")) : s.maxUsdPerRun;
-        console.log(`Episodes ${from}–${to}: ${est.episodes} total
+        console.log(`Steps ${from}–${to}: ${est.episodes} total
   ${est.cached} already explained (free), ${est.factsOnly} with no changes (built from facts, free)
-  ${est.modelCalls} model call${est.modelCalls === 1 ? "" : "s"} for the rest (small episodes share calls), ~${Math.round(est.inputChars / 1000)}k characters of evidence
+  ${est.modelCalls} model call${est.modelCalls === 1 ? "" : "s"} for the rest (small steps share calls), ~${Math.round(est.inputChars / 1000)}k characters of recorded activity
   model: ${o.model ?? s.model ?? "your Claude Code default"} · depth: ${o.depth ?? s.depth}
   estimated tokens: ${formatTokens(est.tokensLow)}–${formatTokens(est.tokensHigh)} in total (fewer if no repairs are needed; ${est.tokenBasis})
   API-equivalent: ${est.estimatedUsd !== null ? `~$${est.estimatedUsd.toFixed(2)} (${est.basis})` : est.basis}${maxUsd !== undefined ? `\n  cap: stops before exceeding $${maxUsd}` : ""}${s.maxTokensPerRun ? `\n  budget: stops at about ${formatTokens(s.maxTokensPerRun)} tokens this run; run it again later to continue where it stopped` : ""}`);
@@ -302,7 +303,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         const r = await explainMany(store, p.id, ids, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account", effort: flag("effort") ?? store.projectSettings(p.id).effort }), { ...o, maxUsd, log: (m) => console.error(`· ${m}`),
           onProgress: (x) => !x.cached && console.error(`  ✓ ${x.unitId} ${x.step.generatedBy === "facts" ? "(facts)" : x.batched ? "(shared call)" : ""}${x.validation.ok ? "" : " ⚠ problems remain"}`) });
         const repairs = r.explained.filter((x) => !x.cached && x.attempts > 1).length;
-        console.log(`\nDone: ${r.explained.length} episodes, ${r.calls} model calls, ${formatTokens(r.spentTokens)} tokens, ${repairs} needed a repair`
+        console.log(`\nDone: ${r.explained.length} steps, ${r.calls} model calls, ${formatTokens(r.spentTokens)} tokens, ${repairs} needed a repair`
           + `${r.skippedForBudget.length ? `, ${r.skippedForBudget.length} left for the next run to stay within the budget` : ""}.`);
         break;
       }
@@ -318,7 +319,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         for (const m of [...probs].sort((a, b) => b.sortKey - a.sortKey).slice(0, 6)) console.log(`  [${(m.data as any).status}] ${m.title.slice(0, 100)}`);
         console.log(`\nDecisions (${decs.length}) · Concepts (${cons.length}) · Unknowns (${qs.length})`);
         for (const d of decs.slice(0, 4)) console.log(`  [${(d.data as any).claimKind}] ${d.title.slice(0, 100)}`);
-        console.log(`\nDecisions, concepts and unknowns come from explained episodes; explain more episodes to fill them in.`);
+        console.log(`\nDecisions, concepts and unknowns come from explained steps; explain more steps to fill them in.`);
         break;
       }
       case "wiki": {
@@ -393,7 +394,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
         const r = html ? exportGuideHtml(store, p.id) : exportGuideMarkdown(store, p.id);
         const out = flag("out") ?? `${p.name}-guide.${html ? "html" : "md"}`;
         fs.writeFileSync(out, "html" in r ? r.html : r.markdown);
-        console.log(`Wrote ${out}: ${r.counts.wikiPages} wiki pages, ${r.counts.steps} of ${r.counts.stepsTotal} episodes explained, plus problems, decisions, glossary and unknowns.`);
+        console.log(`Wrote ${out}: ${r.counts.wikiPages} wiki pages, ${r.counts.steps} of ${r.counts.stepsTotal} steps explained, plus problems, decisions, glossary and unknowns.`);
         break;
       }
       case "serve": {

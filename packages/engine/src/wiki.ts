@@ -419,7 +419,7 @@ export function validateSection(s: WikiSection, brief: Brief): WikiValidation {
         issues.push({ severity: "error", heading: sec.heading, claim: short, message: "agent_stated claim must cite an agent-stated source" });
       if (!missing.length && c.evidence.length && cited.every((x) => x.eventIds.length || x.files?.length)) grounded++;
     }
-  if (brief.sources.length < 5) issues.push({ severity: "warning", heading: "", message: "very little evidence for this page; it may be thin" });
+  if (brief.sources.length < 5) issues.push({ severity: "warning", heading: "", message: "very few sources for this page; it may be thin" });
   return { ok: !issues.some((i) => i.severity === "error"), issues, counts, groundedShare: specific ? grounded / specific : 1 };
 }
 
@@ -470,7 +470,7 @@ export async function generateSection(store: Store, projectId: string, key: Sect
       .get(projectId, key, brief.hash, WIKI_PROMPT_VERSION, model, model);
     if (hit) return storedSection(store, projectId, key, brief.hash)!;
   }
-  if (!brief.sources.length) throw new Error("There is no captured evidence for this page yet.");
+  if (!brief.sources.length) throw new Error("Dena has not recorded anything for this page yet.");
   const kind = key.startsWith("component:") ? "component" : key;
   const schema = key === "tutorial" ? WIKI_TUTORIAL_JSON_SCHEMA : WIKI_JSON_SCHEMA;
   const user = `${PAGE_GUIDE[kind]}\n\nPage: ${brief.title}\n\n<sources>\n${renderBrief(brief)}\n</sources>\n\nWrite the page as JSON matching the schema.`;
@@ -531,7 +531,7 @@ export function renderWikiMarkdown(s: StoredSection): string {
   const by = new Map(s.sources.map((x) => [x.ref, x]));
   return [
     `# ${s.section.title}`, "",
-    "> **AI-written from captured evidence. It can be wrong.** Each statement cites sources [S1]; each source is a fact counted from captured events, a claim from an episode's explanation (which itself cites events), or text from the project's own files.", "",
+    "> **AI-written from what Dena recorded. It can be wrong.** Each statement cites sources [S1]; each source is a fact counted from captured events, a claim from a step's explanation (which itself cites events), or text from the project's own files.", "",
     s.section.summary,
     ...s.section.sections.flatMap((sec) => ["", `## ${sec.heading}`, "", ...sec.claims.map((c) => `- **${badge[c.kind]}** — ${c.text}${c.evidence.length ? ` [${c.evidence.join(", ")}]` : ""}`)]),
     ...(s.section.uncertainty.length ? ["", "## What is uncertain", "", ...s.section.uncertainty.map((u) => `- ${u}`)] : []),

@@ -12,7 +12,7 @@ export function AboutGuide({ projectId }: { projectId: string }) {
     <details className="about-guide">
       <summary>About this guide</summary>
       <ul className="plain small">
-        <li>Written by AI from captured evidence; it can be wrong. Labeled statements are not directly shown by the evidence.</li>
+        <li>Written by AI from what Dena recorded; it can be wrong. Labeled statements are not directly shown by the sources.</li>
         {limits.map((l) => <li key={l}>{l}</li>)}
         <li>The file watcher and git don't record who made a change. Where Dena connects a change to the AI, it is shown as likely, not certain.</li>
       </ul>

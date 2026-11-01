@@ -23,7 +23,7 @@ export function StepView({ x, onRef, editable, onChange, onMarkIncorrect }: {
   const refs = (c: Claim) => c.evidence.map((ref) => {
     const ev = x.evidence[ref];
     return (
-      <button key={ref} className="ref" disabled={!ev?.eventIds.length} title={ev ? `${ev.kind} · open the evidence` : "Not in the evidence"}
+      <button key={ref} className="ref" disabled={!ev?.eventIds.length} title={ev ? `${ev.kind} · see the source` : "Not in the sources"}
         onClick={() => ev?.eventIds[0] != null && onRef(ev.eventIds[0])}>
         {ref}
       </button>
@@ -71,7 +71,7 @@ export function StepView({ x, onRef, editable, onChange, onMarkIncorrect }: {
     <article className="step">
       <h2 className="step-title">{s.title}</h2>
       <div className="ai-notice">
-        <b>Written by AI from captured evidence. It can be wrong.</b> Each statement is labeled{" "}
+        <b>Written by AI from what Dena recorded. It can be wrong.</b> Each statement is labeled{" "}
         {(Object.keys(KIND) as ClaimKind[]).map((k) => <span key={k} className={`badge ${KIND[k].tone}`} title={KIND[k].help} style={{ marginRight: 4 }}>{KIND[k].label}</span>)}
         and the <span className="ref static">E3</span> buttons open the events behind it.{editable && " Hover a statement to edit it, mark it incorrect, or remove it."}
       </div>
@@ -125,10 +125,10 @@ export function StepView({ x, onRef, editable, onChange, onMarkIncorrect }: {
       )}
       <footer className="step-foot">
         {s.generatedBy === "facts"
-          ? "No model was used: this episode changed nothing, so Dena summarised the captured messages."
+          ? "No model was used: this step changed nothing, so Dena summarised the captured messages."
           : `Written by ${x.model ?? "unknown model"} · ${x.depth}${tokenLine(x.tokens) ? ` · ${tokenLine(x.tokens)}` : ""}${x.costUsd ? ` (API-equivalent $${x.costUsd.toFixed(3)})` : ""}${x.batched ? " · shared call" : ""}${x.attempts > 1 ? " · needed 1 repair" : ""}`}
         {" · "}{x.validation.counts.observed} observed, {x.validation.counts.inferred} inferred, {x.validation.counts.agent_stated} agent-said, {x.validation.counts.background} background
-        {" · "}{Math.round(x.validation.citedShare * 100)}% of project statements have valid evidence
+        {" · "}{Math.round(x.validation.citedShare * 100)}% of project statements cite a valid source
       </footer>
     </article>
   );

@@ -13,7 +13,7 @@ const BADGE: Record<Claim["kind"], string> = {
 };
 
 export const AI_NOTICE =
-  "> **AI-generated from captured evidence. It can be wrong.** Each statement is labeled: **✓ Observed** (shown by the evidence), **~ Inferred** (a reasonable conclusion, not shown directly), **💬 Agent said** (the AI's own account of its reasoning, not verified), **📘 Background** (general knowledge, not a claim about this project). Evidence references like [E3] point to the captured events.";
+  "> **AI-generated from what Dena recorded. It can be wrong.** Each statement is labeled: **✓ Observed** (shown by its sources), **~ Inferred** (a reasonable conclusion, not shown directly), **💬 Agent said** (the AI's own account of its reasoning, not verified), **📘 Background** (general knowledge, not a claim about this project). Source references like [E3] point to the recorded events.";
 
 function claimLine(c: Claim, flagged: Set<string>): string {
   const refs = c.evidence.length ? ` [${c.evidence.join(", ")}]` : "";

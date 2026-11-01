@@ -157,7 +157,7 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
   return (
     <div className="page" style={{ maxWidth: 820 }}>
       <div className="step-head">
-        <span className="faint mono">Episode #{ep.position} · {when(ep.startedAt)}</span>
+        <span className="faint mono">Step {ep.position} · {when(ep.startedAt)}</span>
         <div className="episode-meta">
           {s.fileChanges > 0 && <Badge tone="ok">{plural(s.fileChanges, "file change")}</Badge>}
           {s.commits > 0 && <Badge tone="ok">{plural(s.commits, "commit")}</Badge>}
@@ -172,12 +172,12 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
         <div className="explain-card">
           <h2 className="step-title" style={{ marginTop: 0 }}>{ep.title}</h2>
           {est.factsOnly ? (
-            <p className="muted">This episode changed nothing, so Dena can summarise it from the captured messages without using a model.</p>
+            <p className="muted">This step changed nothing, so Dena can summarise it from the captured messages without using a model.</p>
           ) : (
-            <p className="muted">Not explained yet. Dena will send this episode's evidence (secrets removed) to <b>{modelName}</b>: {cost}.
+            <p className="muted">Not explained yet. Dena will send this step's record (secrets removed) to <b>{modelName}</b>: {cost}.
               <span className="faint small" style={{ display: "block", marginTop: 4 }}>Token estimate {est.tokensCalibrated ? "" : "uses "}{est.tokenBasis}.</span></p>
           )}
-          <button className="btn primary" disabled={!!busy} onClick={() => explain()}>{busy ? "Explaining… this can take a minute" : est.factsOnly ? "Summarise" : "Explain this episode"}</button>
+          <button className="btn primary" disabled={!!busy} onClick={() => explain()}>{busy ? "Explaining… this can take a minute" : est.factsOnly ? "Summarise" : "Explain this step"}</button>
         </div>
       )}
 

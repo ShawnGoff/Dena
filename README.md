@@ -21,8 +21,9 @@ Dena labels it so you can check, and never invents history it did not capture.
 - **Wiki**: pages on the project: an overview, a **product guide** (what it does and how to use
   it), **Build it yourself** (one tutorial for the whole project), the architecture, and one page per
   component. Each ends with *What you can learn here* and *How the AI built this*.
-- **Code**: a page per source file, explained function by function. When code changes, only the
-  changed functions are explained again.
+- **Code**: a page per source file, explained function by function, in about 50 languages
+  (TypeScript, Python, C#, C++, Java, Go, Rust, Swift, Kotlin, PHP, Ruby, Lua, GDScript, shaders
+  and more). When code changes, only the changed functions are explained again.
 - **Activity**: what the AI did, session by session, in plain language. No AI is used to write it.
 - **Timeline**, **Memory** (problems and fixes, decisions, concepts) and **Search** over everything
   captured.

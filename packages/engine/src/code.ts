@@ -25,8 +25,19 @@ const LANG: Record<string, string> = {
   ".py": "Python", ".go": "Go", ".rs": "Rust", ".rb": "Ruby", ".java": "Java", ".kt": "Kotlin", ".swift": "Swift",
   ".c": "C", ".h": "C header", ".cpp": "C++", ".hpp": "C++ header", ".cs": "C#", ".php": "PHP",
   ".css": "CSS", ".scss": "SCSS", ".html": "HTML", ".vue": "Vue", ".svelte": "Svelte", ".sql": "SQL", ".sh": "Shell",
+  ".lua": "Lua", ".gd": "GDScript", ".cc": "C++", ".cxx": "C++", ".hh": "C++ header", ".m": "Objective-C", ".scala": "Scala", ".dart": "Dart",
+  ".shader": "Shader", ".hlsl": "HLSL shader", ".glsl": "GLSL shader", ".gdshader": "Godot shader", ".vert": "GLSL shader", ".frag": "GLSL shader",
+  ".kts": "Kotlin script", ".groovy": "Groovy", ".gradle": "Gradle", ".zig": "Zig", ".sol": "Solidity", ".mm": "Objective-C++", ".ino": "Arduino",
+  ".pl": "Perl", ".pm": "Perl", ".ps1": "PowerShell", ".psm1": "PowerShell", ".bash": "Shell", ".zsh": "Shell", ".r": "R",
+  ".jl": "Julia", ".ex": "Elixir", ".exs": "Elixir", ".cr": "Crystal", ".nim": "Nim",
+  ".hs": "Haskell", ".ml": "OCaml", ".fs": "F#", ".fsx": "F#", ".clj": "Clojure", ".cljs": "ClojureScript", ".erl": "Erlang", ".elm": "Elm",
+  ".vb": "Visual Basic", ".pas": "Pascal", ".f90": "Fortran", ".asm": "Assembly",
 };
 const TS_EXT = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
+/** Languages whose blocks are braces: split into classes, their methods, and functions. */
+const BRACE_EXT = new Set([".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".cs", ".java", ".kt", ".swift", ".go", ".rs", ".php", ".m", ".scala", ".dart",
+  ".shader", ".hlsl", ".glsl", ".gdshader", ".vert", ".frag", ".kts", ".groovy", ".gradle", ".zig", ".sol", ".mm", ".ino",
+  ".pl", ".pm", ".ps1", ".psm1", ".sh", ".bash", ".zsh", ".r"]);
 const MAX_FILE_BYTES = 300_000;
 /** Code sent per model call; a file with more changed code than this is explained in several calls. */
 const BATCH_CHARS = 24_000;
@@ -127,7 +138,16 @@ export function splitSymbols(file: string, text: string): CodeSymbol[] {
   const hit = parseCache.get(file);
   if (hit?.hash === hash) return hit.symbols;
   const ext = path.extname(file).toLowerCase();
-  const symbols = TS_EXT.has(ext) ? splitTs(file, text) : ext === ".py" ? splitPython(text) : splitParts(text);
+  const symbols = TS_EXT.has(ext) ? splitTs(file, text)
+    : ext === ".py" ? splitIndented(text, PY_DEF)
+    : ext === ".gd" ? splitIndented(text, GD_DEF)
+    : ext === ".nim" ? splitIndented(text, NIM_DEF)
+    : ext === ".lua" ? splitEnded(text, LUA_DEF)
+    : ext === ".rb" || ext === ".cr" ? splitEnded(text, RB_DEF)
+    : ext === ".jl" ? splitEnded(text, JL_DEF)
+    : ext === ".ex" || ext === ".exs" ? splitEnded(text, EX_DEF)
+    : BRACE_EXT.has(ext) ? splitBraces(text)
+    : splitParts(text);
   const seen = new Map<string, number>();
   for (const s of symbols) { // overloads and redeclarations get distinct keys
     const n = (seen.get(s.key) ?? 0) + 1;
@@ -219,15 +239,31 @@ function splitTs(file: string, text: string): CodeSymbol[] {
 }
 
 /** Python: top-level `def` and `class` blocks (with their decorators and comments); the rest is setup. */
-function splitPython(text: string): CodeSymbol[] {
+/** A top-level definition: group 1 is its keyword, group 2 its name. */
+const PY_DEF = /^(?:async\s+)?(def|class)\s+([A-Za-z_]\w*)/;
+const GD_DEF = /^(?:static\s+)?(func|class)\s+([A-Za-z_]\w*)/;
+const LUA_DEF = /^(?:local\s+)?(function)\s+([\w.:]+)|^(?:local\s+)?([\w.:]+)\s*=\s*(function)\b/;
+const RB_DEF = /^(def|class|module|struct)\s+([\w.:?!=]+)/;
+const NIM_DEF = /^(proc|func|method|iterator|template|macro)\s+([A-Za-z_]\w*)/;
+const JL_DEF = /^(?:mutable\s+)?(function|macro|struct|module)\s+([\w.!]+)/;
+const EX_DEF = /^(defmodule|defprotocol|defimpl|def|defp|defmacro)\s+([\w.?!]+)/;
+const defOf = (re: RegExp, line: string): { name: string; kind: SymbolKind } | null => {
+  const m = re.exec(line);
+  if (!m) return null;
+  const word = m[1] ?? m[4]!;
+  return { name: m[2] ?? m[3]!, kind: /^(class|module|struct|defmodule|defprotocol|defimpl)$/.test(word) ? "class" : "function" };
+};
+
+/** Python and GDScript: blocks by indentation; top-level code between them is "imports and setup". */
+function splitIndented(text: string, def: RegExp): CodeSymbol[] {
   const ls = text.split("\n");
-  const starts: { i: number; name: string; kind: SymbolKind }[] = [];
+  const starts: { i: number; at: number; name: string; kind: SymbolKind }[] = [];
   ls.forEach((l, i) => {
-    const m = /^(?:async\s+)?(def|class)\s+([A-Za-z_]\w*)/.exec(l);
-    if (!m) return;
+    const d = defOf(def, l);
+    if (!d) return;
     let s = i;
     while (s > 0 && /^(@|#)/.test(ls[s - 1]!)) s--;
-    starts.push({ i: s, name: m[2]!, kind: m[1] === "class" ? "class" : "function" });
+    starts.push({ i: s, at: i, ...d }); // i: from its decorators and comments; at: the definition line
   });
   const out: CodeSymbol[] = [];
   const setup: string[] = [];
@@ -242,7 +278,7 @@ function splitPython(text: string): CodeSymbol[] {
   starts.forEach((s, k) => {
     if (s.i > pos) addSetup(pos, s.i);
     // Lines at column 0 after the block (module code between definitions) belong to setup.
-    let blockEnd = s.i + 1;
+    let blockEnd = s.at + 1;
     while (blockEnd < (starts[k + 1]?.i ?? ls.length) && (/^\s/.test(ls[blockEnd]!) || !ls[blockEnd]!.trim() || /^[)\]}]/.test(ls[blockEnd]!))) blockEnd++;
     out.push(mk(s.name, s.name, s.kind, s.i + 1, blockEnd, ls.slice(s.i, blockEnd).join("\n").trimEnd()));
     pos = blockEnd;
@@ -253,6 +289,167 @@ function splitPython(text: string): CodeSymbol[] {
     out.unshift(mk("(module setup)", "imports and top-level code", "setup", rs[0]![0], rs[rs.length - 1]![1], setup.join("\n"), undefined, rs));
   }
   return out.length ? out : splitParts(text);
+}
+
+/** Lua and Ruby: a top-level definition runs to the `end` at the start of a line. */
+function splitEnded(text: string, def: RegExp): CodeSymbol[] {
+  const ls = text.split("\n");
+  const out: CodeSymbol[] = [];
+  const setupRanges: [number, number][] = [];
+  let pos = 0;
+  for (let i = 0; i < ls.length; i++) {
+    const d = defOf(def, ls[i]!);
+    if (!d) continue;
+    let s = i;
+    while (s > pos && /^(--|#)/.test(ls[s - 1]!)) s--;
+    let e = i;
+    if (!/\bend\s*$/.test(ls[i]!)) while (e + 1 < ls.length && !/^end\b/.test(ls[e + 1]!)) e++; // a one-line definition ends itself
+    if (e + 1 < ls.length && /^end\b/.test(ls[e + 1]!)) e++;
+    if (s > pos) setupRanges.push([pos + 1, s]);
+    out.push(mk(d.name, d.name, d.kind, s + 1, e + 1, ls.slice(s, e + 1).join("\n")));
+    pos = e + 1;
+    i = e;
+  }
+  if (pos < ls.length) setupRanges.push([pos + 1, ls.length]);
+  return withSetup(out, setupRanges, ls) ?? splitParts(text);
+}
+
+/** Adds the lines outside every symbol as one "imports and setup" part; null when nothing was found. */
+function withSetup(out: CodeSymbol[], ranges: [number, number][], ls: string[]): CodeSymbol[] | null {
+  if (!out.length) return null;
+  const used = ranges.filter(([a, b]) => ls.slice(a - 1, b).some((l) => l.trim()));
+  if (used.length) {
+    const rs = mergeRanges(used, ls);
+    out.unshift(mk("(module setup)", "imports and top-level code", "setup", rs[0]![0], rs[rs.length - 1]![1],
+      used.map(([a, b]) => ls.slice(a - 1, b).join("\n")).join("\n"), undefined, rs));
+  }
+  return out.sort((a, b) => a.startLine - b.startLine || (a.kind === "setup" ? -1 : 1));
+}
+
+const CONTROL = /^(if|for|foreach|while|switch|catch|else|do|try|using|lock|return|fixed|unsafe|checked|match|loop|select|defer|go|synchronized|when|guard|with)\b/;
+const CONTAINER = /\b(namespace|package)\b|^extern\s+"C"/;
+const CLASSY = /\b(class|struct|interface|enum|record|trait|impl|object|protocol|extension|union|module|contract|library)\b\s*([A-Za-z_][\w.:<>, ]*)?/;
+/** Declarations named without a parameter list: Perl `sub`, PowerShell and shell `function`, R and Zig assignments. */
+const NAMED_DECL = /^(?:(?:export|local|global|script)\s*:?\s*)?(?:sub|function)\s+([\w:.-]+)|^([\w.]+)\s*(?:<-|=)\s*function\b/;
+const KEYWORDS = new Set(["func", "fn", "fun", "function", "def", "new", "if", "for", "while", "switch", "catch", "return", "sizeof", "typeof", "nameof", "defined"]);
+
+/**
+ * C-style languages (C, C++, C#, Java, Go, Rust, Swift, Kotlin, PHP, shaders): finds brace blocks
+ * by depth, skipping strings and comments. Classes are outlined without their methods' bodies, and
+ * each method and function is its own part; namespaces are looked through.
+ */
+function splitBraces(text: string): CodeSymbol[] {
+  const ls = text.split("\n");
+  // Each line's code without strings and comments, so braces inside them do not count.
+  let inBlock = false;
+  const code = ls.map((l) => {
+    let out = "";
+    for (let i = 0; i < l.length; i++) {
+      if (inBlock) {
+        if (l.startsWith("*/", i)) { inBlock = false; i++; }
+        continue;
+      }
+      if (l.startsWith("/*", i)) { inBlock = true; i++; continue; }
+      if (l.startsWith("//", i)) break;
+      const q = l[i];
+      if (q === '"' || q === "'" || q === "`") {
+        let j = i + 1;
+        while (j < l.length && l[j] !== q) j += l[j] === "\\" ? 2 : 1;
+        if (q === "'" && j - i > 3) { out += q; continue; } // a Rust lifetime or apostrophe, not a character literal
+        i = j;
+        out += '""';
+        continue;
+      }
+      out += q;
+    }
+    return out;
+  });
+  // A block: the line its "{" opens on, and the line where depth comes back.
+  let depth = 0;
+  const opens: { line: number; depth: number }[] = [];
+  const blocks: { open: number; close: number; depth: number }[] = [];
+  code.forEach((c, i) => {
+    for (const ch of c) {
+      if (ch === "{") opens.push({ line: i, depth: depth++ });
+      else if (ch === "}" && depth > 0) {
+        depth--;
+        const o = opens.pop()!;
+        blocks.push({ open: o.line, close: i, depth: o.depth });
+      }
+    }
+  });
+  // Doc comments and attributes belong to what follows; "# " is a comment in Perl, shell, R and PowerShell (not #include).
+  const isLead = (l: string) => /^\s*(\/\/|\/\*|\*|#\[|\[|@|#(\s|$))/.test(l);
+  const header = (b: { open: number }) => {
+    const before = code[b.open]!.slice(0, code[b.open]!.indexOf("{")).trim();
+    let start = b.open;
+    let text = before;
+    // Allman style: the "{" alone on its line takes its header from the lines above.
+    while (!text && start > 0 && !/[;{}]\s*$/.test(code[start - 1]!.trim())) {
+      start--;
+      text = code[start]!.trim();
+    }
+    while (start > 0 && !/[;{}]\s*$/.test(code[start - 1]!.trim()) && code[start - 1]!.trim() && !isLead(ls[start - 1]!) && /[,(]\s*$|^\s*[:)]/.test(code[start - 1]! + code[start]!)) {
+      start--;
+      text = `${code[start]!.trim()} ${text}`;
+    }
+    let lead = start;
+    while (lead > 0 && isLead(ls[lead - 1]!)) lead--;
+    return { text, start, lead };
+  };
+  const out: CodeSymbol[] = [];
+  const covered: [number, number][] = [];
+  const nameBeforeParen = (h: string) => {
+    for (const m of h.matchAll(/([A-Za-z_~][\w~]*)\s*(?:<[^()]*>)?\s*\(/g)) if (!KEYWORDS.has(m[1]!)) return m[1]!;
+    return null;
+  };
+  const walk = (from: number, to: number, d: number, parent?: string) => {
+    for (const b of blocks.filter((x) => x.depth === d && x.open >= from && x.close <= to).sort((x, y) => x.open - y.open)) {
+      const h = header(b);
+      if (CONTROL.test(h.text) || /=\s*$|=>\s*$/.test(h.text) && !/\)\s*(=>)?\s*$/.test(h.text)) continue;
+      if (CONTAINER.test(h.text)) { walk(b.open, b.close, d + 1, parent); continue; }
+      const cls = CLASSY.exec(h.text);
+      const paren = h.text.indexOf("(");
+      if (cls && (paren < 0 || paren > cls.index)) {
+        // Go and Rust name a type before its keyword (`type Server struct`).
+        const name = /\btype\s+([A-Za-z_]\w*)/.exec(h.text)?.[1] ?? /\b(?:const|var|let)\s+([A-Za-z_]\w*)\s*=/.exec(h.text)?.[1] // Zig: `const Point = struct`
+          ?? ((cls[2] ?? "").trim().split(/[\s<:,{]/)[0] || cls[1]!);
+        const key = parent ? `${parent}.${name}` : name;
+        const before = out.length;
+        walk(b.open, b.close, d + 1, key);
+        const members = out.slice(before).flatMap((m) => m.ranges);
+        // The class's own lines: its header, fields and closing brace, without its methods' bodies.
+        const own: [number, number][] = [];
+        let at = h.lead + 1;
+        for (const [a, z] of members.sort((x, y) => x[0] - y[0])) {
+          if (a > at) own.push([at, a - 1]);
+          at = z + 1;
+        }
+        if (at <= b.close + 1) own.push([at, b.close + 1]);
+        const rs = mergeRanges(own.filter(([a, z]) => ls.slice(a - 1, z).some((l) => l.trim())), ls);
+        out.push(mk(key, name, "class", h.lead + 1, b.close + 1, rs.map(([a, z]) => ls.slice(a - 1, z).join("\n")).join("\n    …\n"), parent, rs));
+        covered.push([h.lead + 1, b.close + 1]);
+        continue;
+      }
+      const named = NAMED_DECL.exec(h.text);
+      const fn = named ? named[1] ?? named[2]! : paren >= 0 ? nameBeforeParen(h.text) : null;
+      if (!fn) continue; // an initializer or other block: stays with its surroundings
+      const key = parent ? `${parent}.${fn}` : fn;
+      out.push(mk(key, fn, parent ? "method" : "function", h.lead + 1, b.close + 1, ls.slice(h.lead, b.close + 1).join("\n"), parent));
+      covered.push([h.lead + 1, b.close + 1]);
+    }
+  };
+  walk(0, ls.length, 0);
+  if (!out.length) return splitParts(text);
+  const top = mergeRanges(covered.filter(([a]) => !covered.some(([x, y]) => x < a && a <= y)).sort((x, y) => x[0] - y[0]), ls);
+  const gaps: [number, number][] = [];
+  let at = 1;
+  for (const [a, z] of top) {
+    if (a > at) gaps.push([at, a - 1]);
+    at = Math.max(at, z + 1);
+  }
+  if (at <= ls.length) gaps.push([at, ls.length]);
+  return withSetup(out, gaps, ls)!;
 }
 
 /** Other languages: the whole file, or parts of about 150 lines split at blank lines. */

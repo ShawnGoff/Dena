@@ -96,6 +96,35 @@ describe("code explainers", () => {
     expect(s[0]!.ranges).toEqual([[1, 4]]); // imports and the constant, joined across the blank line
   });
 
+  it("splits other languages: C-style braces, Lua and Ruby ends, Python and GDScript indentation", () => {
+    const keys = (file: string, text: string) => splitSymbols(file, text).map((x) => `${x.key}:${x.kind}`);
+    const cs = "using System;\nusing UnityEngine;\n\nnamespace Game\n{\n    /// <summary>The player.</summary>\n    [Serializable]\n    public class Player : MonoBehaviour\n    {\n        public int health = 100;\n        private string name = \"a { brace\";\n\n        // Moves the player.\n        public void Move(Vector3 dir)\n        {\n            if (dir.magnitude > 1) { dir.Normalize(); }\n            transform.position += dir;\n        }\n\n        public int Damage(int amount) {\n            health -= amount;\n            return health;\n        }\n    }\n}\n";
+    expect(keys("Player.cs", cs)).toEqual(["(module setup):setup", "Player:class", "Player.Move:method", "Player.Damage:method"]);
+    const player = splitSymbols("Player.cs", cs).find((x) => x.key === "Player")!;
+    expect(player.text).toContain("[Serializable]"); // attributes and doc comments stay with their class
+    expect(player.text).toContain('"a { brace"'); // a brace inside a string is not a block
+    expect(player.text).not.toContain("transform.position"); // method bodies left out of the outline
+    expect(keys("main.go", "package main\n\nimport \"fmt\"\n\ntype Server struct {\n\tport int\n}\n\nfunc (s *Server) Start() error {\n\tfmt.Println(\"start {\")\n\treturn nil\n}\n\nfunc main() {\n\ts := &Server{port: 1}\n\ts.Start()\n}\n")).toEqual(["(module setup):setup", "Server:class", "Start:function", "main:function"]);
+    expect(keys("enemy.lua", "local Enemy = {}\n\n-- Creates an enemy.\nfunction Enemy.new(x, y)\n  local self = { x = x, y = y }\n  if x > 0 then\n    print(\"right\")\n  end\n  return self\nend\n\nlocal function helper() return 1 end\n\nEnemy.update = function(self, dt)\n  self.x = self.x + dt\nend\n\nreturn Enemy\n")).toEqual(["(module setup):setup", "Enemy.new:function", "helper:function", "Enemy.update:function"]);
+    const gd = splitSymbols("player.gd", "extends CharacterBody2D\n\nvar speed = 200\n\nfunc _ready():\n\tprint(\"hi\")\n\n# Moves it.\nfunc _physics_process(delta):\n\tvelocity.x = speed\n\tmove_and_slide()\n");
+    expect(gd.map((x) => `${x.key}:${x.startLine}-${x.endLine}`)).toEqual(["(module setup):1-4", "_ready:5-7", "_physics_process:8-12"]); // its comment included
+  });
+
+  it("splits the other popular languages: Perl, shell, R, PowerShell, Solidity, Julia, Zig, Kotlin script", () => {
+    const cases: [string, string, string[]][] = [
+      ["util.pl", "use strict;\nmy %cfg = (a => 1);\n\n# Adds numbers.\nsub add {\n  my ($a, $b) = @_;\n  return $a + $b;\n}\n\nsub main { print add(1, 2); }\n", ["(module setup):setup", "add:function", "main:function"]],
+      ["deploy.sh", "#!/usr/bin/env bash\nset -e\nDIR=\"${HOME}/app\"\n\nbuild() {\n  echo \"building {\"\n}\n\nfunction deploy {\n  build\n  rsync -a \"$DIR\" host:\n}\n\ndeploy\n", ["(module setup):setup", "build:function", "deploy:function"]],
+      ["stats.R", "library(dplyr)\n\nmean_of <- function(x) {\n  if (length(x) == 0) { return(NA) }\n  sum(x) / length(x)\n}\n\ndata <- read.csv(\"a.csv\")\n", ["(module setup):setup", "mean_of:function"]],
+      ["Tool.ps1", "function Get-Thing {\n    param([string]$Name)\n    Write-Output $Name\n}\nGet-Thing -Name \"x\"\n", ["Get-Thing:function", "(module setup):setup"]],
+      ["Vault.sol", "pragma solidity ^0.8.0;\n\ncontract Vault {\n    uint256 public total;\n\n    function deposit() external payable {\n        total += msg.value;\n    }\n}\n", ["(module setup):setup", "Vault:class", "Vault.deposit:method"]],
+      ["geo.jl", "using LinearAlgebra\n\nstruct Point\n  x::Float64\nend\n\nfunction dist(a, b)\n  if a.x > 0\n    return 1\n  end\n  abs(a.x - b.x)\nend\n", ["(module setup):setup", "Point:class", "dist:function"]],
+      ["point.zig", "const std = @import(\"std\");\n\nconst Point = struct {\n    x: i32,\n    pub fn len(self: Point) i32 {\n        return self.x;\n    }\n};\n\npub fn main() void {\n    std.debug.print(\"hi\", .{});\n}\n", ["(module setup):setup", "Point:class", "Point.len:method", "main:function"]],
+      ["build.gradle.kts", "plugins { kotlin(\"jvm\") }\n\nfun helper(x: Int): Int {\n    return x * 2\n}\n", ["(module setup):setup", "helper:function"]],
+    ];
+    for (const [file, text, want] of cases) expect(splitSymbols(file, text).map((x) => `${x.key}:${x.kind}`), file).toEqual(want);
+    expect(splitSymbols("util.pl", cases[0]![1]).find((x) => x.key === "add")!.text).toContain("# Adds numbers."); // its comment comes with it
+  });
+
   it("explains everything once, then only what changed", async () => {
     const fake = new FakeProvider();
     const first = await explainFile(store, pid, "src/csv.ts", fake);

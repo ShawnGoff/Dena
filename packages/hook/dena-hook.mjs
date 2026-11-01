@@ -41,13 +41,47 @@ function readStdin() {
   }
 }
 
+/**
+ * After a commit with no note since the previous commit in this session, a one-line reminder for
+ * the agent. State is a tiny file per session: when it last noted and last committed.
+ */
+function noteReminder(sessionId, command, at) {
+  const file = path.join(HOME, "notes-state", `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+  let st = {};
+  try {
+    st = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch { /* first call in this session */ }
+  const save = () => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(st));
+  };
+  if (/dena-hook\.mjs["']?\s+note\b/.test(command)) {
+    st.lastNote = at;
+    save();
+    return null;
+  }
+  // Only a real `git commit`, not one mentioned inside a heredoc or a quoted string.
+  const bare = command.replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?\n\1(\n|$)/g, " ").replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, '""');
+  if (!/(^|[\s;&|(])git\s+(-\S+\s+\S+\s+)*commit\b/.test(bare)) return null;
+  const noted = st.lastNote && (!st.lastCommit || st.lastNote > st.lastCommit);
+  st.lastCommit = at;
+  save();
+  if (noted) return null;
+  const cmd = SELF.includes(" ") ? `node "${SELF}"` : `node ${SELF}`;
+  return `Dena: no note was recorded for the work in this commit. If you made a choice worth explaining (why this approach, or what caused a problem you fixed), record it now with \`${cmd} note decision\`; if it was routine, carry on.`;
+}
+
 const firstLine = (s, max = 200) => (typeof s === "string" ? s.split("\n")[0].slice(0, max) : undefined);
 
 function notesInstructions() {
   const cmd = SELF.includes(" ") ? `node "${SELF}"` : `node ${SELF}`;
   return [
     "Dena is recording this project to build a guide that explains how it was built.",
-    "When you make a non-obvious choice (an approach, library or trade-off) or find the cause of a problem, record one short note:",
+    "The guide can only explain *why* the work was done the way it was if you say so. Record a short note:",
+    "- whenever you choose an approach, library or trade-off over another (decision);",
+    "- whenever you find the cause of a bug or failure (cause);",
+    "- whenever you proceed on something you assumed rather than checked (assumption);",
+    "- and at least once before each commit, for the main choice in that work.",
     `${cmd} note decision <<'NOTE'`,
     "<one or two sentences: what you chose or found, and why>",
     "NOTE",
@@ -102,8 +136,13 @@ try {
   fs.mkdirSync(spool, { recursive: true });
   fs.appendFileSync(path.join(spool, `hooks-${record.received_at.slice(0, 10)}.jsonl`), JSON.stringify(record) + "\n");
 
-  if (input.hook_event_name === "SessionStart" && recording.some((p) => within(sessionDir, p.root) || within(input.cwd, p.root))) {
+  const inRecording = recording.some((p) => within(sessionDir, p.root) || within(input.cwd, p.root));
+  if (input.hook_event_name === "SessionStart" && inRecording) {
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: notesInstructions() } }));
+  }
+  if (input.hook_event_name === "PostToolUse" && input.tool_name === "Bash" && inRecording && typeof ti.command === "string" && input.session_id) {
+    const reminder = noteReminder(String(input.session_id), ti.command, record.received_at);
+    if (reminder) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: reminder } }));
   }
 } catch {
   // never interfere with the user's session

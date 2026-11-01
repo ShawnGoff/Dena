@@ -164,6 +164,9 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
           {s.commits > 0 && <Badge tone="ok">{plural(s.commits, "commit")}</Badge>}
           {s.tests > 0 && <Badge tone={s.testFailures ? "bad" : "ok"}>{plural(s.tests, "test run")}{s.testFailures ? ` · ${s.testFailures} failed` : ""}</Badge>}
           {s.notes > 0 && <Badge tone="warn">{plural(s.notes, "agent note")}</Badge>}
+          {s.notes === 0 && (s.fileChanges > 0 || s.commits > 0) && (
+            <Badge tone="muted" title="The AI wrote no notes during this step, so any reasons given come from what Dena recorded, not from the AI saying why.">no AI notes</Badge>
+          )}
         </div>
       </div>
       {busy && <BusyBar what={`Explaining${busy !== "default" ? ` with ${busy[0]!.toUpperCase() + busy.slice(1)}` : ""}`} onStop={stop} stopping={stopping} />}

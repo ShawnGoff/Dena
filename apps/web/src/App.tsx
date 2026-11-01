@@ -113,7 +113,7 @@ export function App() {
 }
 
 /** Recording status is always visible, with the controls next to it. */
-function Recording({ project, onChange }: { project: Project; onChange: () => void }) {
+export function Recording({ project, onChange }: { project: Project; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);

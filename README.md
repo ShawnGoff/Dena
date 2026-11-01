@@ -79,6 +79,17 @@ dena hooks install my-app
 dena hooks install my-app --yes
 ```
 
+Or install the Dena plugin once for every project, from the folder you cloned
+([plugins/dena/README.md](plugins/dena/README.md)):
+
+```
+/plugin marketplace add <path to your Dena folder>
+/plugin install dena@dena
+```
+
+Use one or the other for a project, not both. Dena's first-run checklist (on its start page and
+Overview) shows what is still missing.
+
 Start Dena and open it in your browser:
 
 ```bash

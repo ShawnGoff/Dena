@@ -1,0 +1,5 @@
+{
+  "name": "dena",
+  "version": "0.1.0",
+  "description": "Live capture for Dena: records exit codes, timings and the notes channel from your Claude Code sessions. The guide itself is built by Dena (dena serve)."
+}

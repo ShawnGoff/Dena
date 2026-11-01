@@ -16,7 +16,7 @@ import { HOOK_SCRIPT } from "./hooks.ts";
 
 export type Scope = "project" | "user";
 const MARK = "dena-hook.mjs";
-const EVENTS: { event: string; matcher?: string; sync?: boolean }[] = [
+export const EVENTS: { event: string; matcher?: string; sync?: boolean }[] = [
   { event: "SessionStart", sync: true }, // its output teaches the agent the notes channel
   { event: "UserPromptSubmit" },
   { event: "PostToolUse", matcher: "*" },

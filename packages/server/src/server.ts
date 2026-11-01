@@ -4,12 +4,13 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { pluginInstalled, requiredDone, setupSteps } from "./setup.ts";
 import { correlate, authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
 import { foldersUsedWithClaude, git, hookInstall, importChangedTranscripts, importGitIfChanged, isWorkFolder, lastHeartbeat, liveRecorder, pausedWindows, Recorder, type RecorderOptions } from "@dena/adapters";
 import { explainMany, stepCoverage, exportGuideHtml, tutorialPlan, writeTutorial, episodeChapters, howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, explainFolder, folderPlan, inFolder, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
   ensureDocRevision, exportGuideMarkdown, activeRevision, addNote, adoptProposed, buildPacket, declineProposed, dismissNote, notesFor, proposedRevision, recordGenerated, restoreRevision, revisions,
   RevisionConflict, saveUserEdit, Step, StoppedError, WikiSection, type DocType,
-  estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
+  estimateSectionTokens, buildBrief, ClaudeCodeProvider, claudeAuthStatus, findClaudeBinary, ensureMemory, generateSection, loadMemory, sectionKeys, storedSection, type SectionKey, episodeEvents, estimate, explainEpisode, loadEpisodes, rebuildEpisodes, storedExplanations, type Provider } from "@dena/engine";
 
 /**
  * Dena's local server: a JSON API over the store plus the built web UI.
@@ -196,6 +197,18 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     // /api/projects
     if (parts.length === 1 && parts[0] === "projects" && method === "GET")
       return store.listProjects().map((p) => ({ ...p, ...recorderState(p.id), stats: store.stats(p.id), folder: store.projectSettings(p.id).folder ?? null }));
+
+    // The first-run checklist. Read-only.
+    if (parts.length === 1 && parts[0] === "setup" && method === "GET") {
+      const ps = store.listProjects();
+      const steps = setupSteps({
+        claudeFound: !!findClaudeBinary(),
+        projects: ps.length,
+        recording: ps.filter((p) => p.recordingState === "recording").length,
+        liveCapture: pluginInstalled(opts.recorder?.claudeHome) || hookInstall.installedIn("user") || ps.some((p) => hookInstall.installedIn("project", p.rootPath)),
+      });
+      return { steps, ready: requiredDone(steps) };
+    }
 
     // Folders you worked in with Claude Code that Dena does not know yet. Read-only; nothing is recorded.
     if (parts[0] === "discover" && parts.length === 1 && method === "GET") return { folders: suggestions() };

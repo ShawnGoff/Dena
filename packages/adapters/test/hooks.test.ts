@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Store } from "@dena/core";
 import { HOOK_SCRIPT, ingestHooks } from "../src/claude-code/hooks.ts";
+import { addPausedWindow } from "../src/paused.ts";
 import { applyPlan, installedIn, planInstall, planUninstall } from "../src/claude-code/install.ts";
 import { parseAgentNote, transcriptsIn } from "../src/claude-code/transcript.ts";
 
@@ -122,6 +123,24 @@ describe("ingestHooks", () => {
     expect(gaps.some((g) => g.includes("(p1)"))).toBe(false);
 
     expect((await ingestHooks(store, pid, root)).records).toBe(0); // cursor advanced
+    fs.rmSync(tdir, { recursive: true, force: true });
+  });
+
+  it("leaves out the turns of a conversation that happened while paused", async () => {
+    const tdir = fs.mkdtempSync(path.join(os.tmpdir(), "dena-tr-"));
+    const transcript = path.join(tdir, "s.jsonl");
+    const rec = (o: object, at: string) => JSON.stringify({ sessionId: "s", cwd: root, timestamp: at, isSidechain: false, ...o });
+    fs.writeFileSync(transcript, [
+      rec({ type: "user", uuid: "u1", parentUuid: null, promptId: "p1", message: { role: "user", content: "before the pause" } }, "2026-10-01T10:00:00.000Z"),
+      rec({ type: "user", uuid: "u2", parentUuid: "u1", promptId: "p2", message: { role: "user", content: "a private question" } }, "2026-10-01T10:30:00.000Z"),
+      rec({ type: "user", uuid: "u3", parentUuid: "u2", promptId: "p3", message: { role: "user", content: "after resuming" } }, "2026-10-01T11:30:00.000Z"),
+    ].join("\n") + "\n");
+    addPausedWindow(store, pid, { from: "2026-10-01T10:15:00.000Z", to: "2026-10-01T11:00:00.000Z" });
+    store.setRecordingState(pid, "recording");
+    runHook({ hook_event_name: "UserPromptSubmit", session_id: "s", cwd: root, transcript_path: transcript, prompt_id: "p3" });
+    await ingestHooks(store, pid, root, { final: true });
+    const prompts = store.timeline(pid).filter((e) => e.eventType === "prompt_submitted").map((e) => e.occurredAt);
+    expect(prompts).toEqual(["2026-10-01T10:00:00.000Z", "2026-10-01T11:30:00.000Z"]);
     fs.rmSync(tdir, { recursive: true, force: true });
   });
 

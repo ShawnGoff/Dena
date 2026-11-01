@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { correlate, Store, type IngestBatch, type NewEvent } from "@dena/core";
 import {
   enqueue, exportGuideMarkdown, findOutdated, listJobs, processDueJobs,
-  activeRevision, addNote, adoptProposed, proposedRevision, restoreRevision, revisions, RevisionConflict, saveUserEdit,
+  activeRevision, addNote, adoptProposed, isRetryable, latestExplanations, proposedRevision, restoreRevision, revisions, RevisionConflict, saveUserEdit,
   buildEpisodes, buildPacket, componentOf, ensureMemory, estimate, failingTests, loadMemory, explainEpisode, explainMany, rebuildEpisodes, renderPacket, renderStep, validateStep,
   type GenerateResult, type Provider, type Step,
 } from "../src/index.ts";
@@ -387,6 +387,43 @@ describe("revisions and owner corrections", () => {
     const now = activeRevision(store, pid, "step", id)!;
     expect(now).toMatchObject({ origin: "restored" });
     expect(now.content.summary).toBe(v1.content.summary);
+  });
+
+  it("keeps a waiting AI update through the owner's edits, and treats a restored version as theirs", async () => {
+    const id = ep();
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]));
+    const v1 = activeRevision(store, pid, "step", id)!;
+    saveUserEdit(store, pid, "step", id, { ...v1.content, summary: "Mine." }, v1.id);
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]), { force: true });
+    const waiting = proposedRevision(store, pid, "step", id)!;
+    const v2 = activeRevision(store, pid, "step", id)!;
+    saveUserEdit(store, pid, "step", id, { ...v2.content, summary: "Mine, again." }, v2.id);
+    expect(proposedRevision(store, pid, "step", id)?.id).toBe(waiting.id); // still waiting after another edit
+
+    // An AI rewrite that finishes after a restore waits for review instead of replacing it.
+    restoreRevision(store, pid, "step", id, v1.id);
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]), { force: true });
+    expect(activeRevision(store, pid, "step", id)!.origin).toBe("restored");
+    expect(proposedRevision(store, pid, "step", id)!.id).not.toBe(waiting.id); // the newer AI version replaced the older proposal
+  });
+
+  it("builds project memory from the version the owner sees, not an AI rewrite waiting for review", async () => {
+    const id = ep();
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]));
+    const v1 = activeRevision(store, pid, "step", id)!;
+    saveUserEdit(store, pid, "step", id, { ...v1.content, summary: "The owner's summary." }, v1.id);
+    await explainEpisode(store, pid, id, new FakeProvider([goodStep()]), { force: true }); // lands as a proposal
+    expect(latestExplanations(store, pid).find((x) => x.unitId === id)!.step.summary).toBe("The owner's summary.");
+    expect(ensureMemory(store, pid)).toBe(true);
+    restoreRevision(store, pid, "step", id, v1.id);
+    expect(ensureMemory(store, pid)).toBe(true); // a restore rebuilds memory
+    expect(latestExplanations(store, pid).find((x) => x.unitId === id)!.step.summary).toBe(v1.content.summary);
+  });
+
+  it("does not retry failures that cannot fix themselves", () => {
+    expect(isRetryable("Dena has not recorded anything for this page yet.")).toBe(false);
+    expect(isRetryable("Episode ep_1 has no evidence to explain")).toBe(false);
+    expect(isRetryable("socket hang up")).toBe(true);
   });
 
   it("feeds owner notes to the writer as non-evidence, and checks how they are cited", async () => {

@@ -72,7 +72,7 @@ export function Guide({ projectId, openEpisode, onEpisode, onEvent }: {
         ))}
       </nav>
       <div className="guide-main">
-        <EpisodeStep key={current.id} projectId={projectId} ep={current} onEvent={onEvent} onExplained={() => markExplained(current.id)} />
+        <EpisodeStep key={current.id} projectId={projectId} ep={current} onEvent={onEvent} onExplained={() => { markExplained(current.id); loadEps(); }} />
       </div>
     </div>
   );
@@ -136,6 +136,7 @@ function EpisodeStep({ projectId, ep, onEvent, onExplained }: { projectId: strin
     } catch (e) {
       setErr((e as Error).message);
     }
+    onExplained(); // an edited title shows in the list too
     await load();
   };
   const markIncorrect = (c: Claim, note: string) =>

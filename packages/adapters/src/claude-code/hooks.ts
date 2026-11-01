@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { redactText, type IngestBatch, type Store } from "@dena/core";
 import { SOURCE as TRANSCRIPT_SOURCE, importTranscript } from "./transcript.ts";
+import { withoutPaused } from "../paused.ts";
 
 /**
  * Claude Code hooks adapter.
@@ -110,7 +111,7 @@ export async function ingestHooks(store: Store, projectId: string, root: string,
     const file = t.startsWith("~") ? path.join(process.env.HOME ?? "", t.slice(1)) : t;
     if (!fs.existsSync(file)) continue;
     const { batch } = await importTranscript(file, root);
-    store.ingest(projectId, batch);
+    store.ingest(projectId, withoutPaused(store, projectId, batch)); // a conversation may span a pause
     const st = fs.statSync(file);
     store.setCursor(projectId, TRANSCRIPT_SOURCE, file, `${st.size}:${Math.floor(st.mtimeMs)}`);
     result.transcriptsImported++;
@@ -195,7 +196,7 @@ export async function ingestHooks(store: Store, projectId: string, root: string,
 
   // Sessions must exist before events reference them; the upsert keeps any times already known.
   for (const id of sessions) batch.sessions.push({ id, source: TRANSCRIPT_SOURCE, startedAt: null, endedAt: null });
-  result.events = store.ingest(projectId, batch).eventsInserted;
+  result.events = store.ingest(projectId, withoutPaused(store, projectId, batch)).eventsInserted;
   store.setCursor(projectId, SOURCE, pendingKey, JSON.stringify(stillPending));
   return result;
 }

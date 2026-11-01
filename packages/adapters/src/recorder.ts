@@ -6,6 +6,7 @@ import * as claudeCode from "./claude-code/transcript.ts";
 import * as git from "./git/git.ts";
 import { FsCapture } from "./fs/watcher.ts";
 import { ingestHooks } from "./claude-code/hooks.ts";
+import { addPausedWindow, pausedWindows, withoutPaused } from "./paused.ts";
 
 /**
  * Runs every capture source for one project. Each source is independent: a failure in one
@@ -33,39 +34,7 @@ export function transcriptFiles(root: string, scope: "own" | "all", claudeHome =
   });
 }
 
-// ---- paused windows ----
-
-/**
- * Pausing is private: anything stamped inside a paused window (a conversation, a commit, a file
- * change) is left out, even when it is read later from Claude Code's transcripts or git history.
- * Stopping is different: work done while Dena was off is caught up when recording starts again.
- */
-export interface Window { from: string; to: string }
-
-export function pausedWindows(store: Store, projectId: string): Window[] {
-  try {
-    return JSON.parse(store.getCursor(projectId, "dena", "paused_windows") ?? "[]");
-  } catch {
-    return [];
-  }
-}
-
-export function addPausedWindow(store: Store, projectId: string, w: Window): void {
-  if (w.to <= w.from) return;
-  store.setCursor(projectId, "dena", "paused_windows", JSON.stringify([...pausedWindows(store, projectId), w]));
-}
-
-/** The batch without anything that happened while recording was paused. */
-export function withoutPaused<T extends { events: { occurredAt: string; sourceEventId: string }[]; links: any[]; artifacts: any[] }>(store: Store, projectId: string, batch: T): T {
-  const windows = pausedWindows(store, projectId);
-  if (!windows.length) return batch;
-  const inside = (t: string) => windows.some((w) => t >= w.from && t <= w.to);
-  const dropped = new Set(batch.events.filter((e) => inside(e.occurredAt)).map((e) => e.sourceEventId));
-  if (!dropped.size) return batch;
-  return { ...batch, events: batch.events.filter((e) => !dropped.has(e.sourceEventId)),
-    links: batch.links.filter((l) => !dropped.has(l.fromSourceEventId) && !dropped.has(l.toSourceEventId)),
-    artifacts: batch.artifacts.filter((a) => !dropped.has(a.sourceEventId)) };
-}
+export { addPausedWindow, pausedWindows, withoutPaused, type Window } from "./paused.ts";
 
 /** Imports transcripts that changed since the last import. Unchanged files are skipped by size+mtime. */
 export async function importChangedTranscripts(store: Store, projectId: string, root: string, opts: RecorderOptions = {}) {
@@ -237,7 +206,8 @@ export class Recorder {
         this.fs?.stop();
         this.fs = null;
         this.state = "paused";
-        this.pausedAt = new Date().toISOString();
+        // From when it was asked for (stamped by setRecordingState), so the seconds before this tick stay private too.
+        this.pausedAt = this.store.getCursor(this.projectId, "dena", "paused_at") || new Date().toISOString();
         this.store.setCursor(this.projectId, "dena", "paused_at", this.pausedAt); // so a pause survives Dena quitting
         this.log("paused — nothing is being captured, and this time stays out of the guide");
       } else if (wanted === "recording" && this.state === "paused") {

@@ -26,6 +26,8 @@ export interface Validation {
 }
 
 const SECTIONS = [...STEP_CLAIM_SECTIONS, "whatChanged", "verification"] as const;
+/** Sections the model writes (whatChanged and verification are Dena's own facts). */
+const MODEL_TEXT = STEP_CLAIM_SECTIONS;
 /**
  * Claims about a test outcome ("tests passed", "the suite failed", "all 33 pass"). Descriptions
  * such as "the failing test" or "fix the failure" are not outcome claims: matching them removed
@@ -33,6 +35,14 @@ const SECTIONS = [...STEP_CLAIM_SECTIONS, "whatChanged", "verification"] as cons
  */
 const PASS = /\b(?:tests?|suite|run|checks?)\b[^.;]{0,40}\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|went green)\b|\ball (?:\d+ )?(?:tests? )?pass(?:ed|es)?\b|\b\d+ (?:tests? )?passed\b/i;
 const FAIL = /\b(?:tests?|suite|run|checks?)\b[^.;]{0,40}\b(?:fail(?:s|ed)?|broke)\b|\b\d+ (?:tests? )?failed\b/i;
+
+/**
+ * A project's own milestone labels ("M1", "phase 2", "milestone 3", "sprint 4"), which mean
+ * nothing to a reader. Apple's M-series chips ("M1 Mac", "M2 Pro") are not labels.
+ */
+const SHORTHAND = /\b(?:M\d{1,2}(?![\w-]|\s+(?:Mac|MacBook|iMac|iPad|chip|Pro|Max|Ultra|processor|silicon))|(?:milestone|phase|sprint)\s+\d+)\b/i;
+const shorthandIn = (text: string) => SHORTHAND.exec(text)?.[0] ?? null;
+const shorthandMessage = (found: string) => `uses the project's shorthand "${found}"; say in plain words what it refers to, or leave it out`;
 
 /** Code compared line by line, ignoring indentation and diff markers. */
 const normCode = (l: string) => l.replace(/^[+\- ](?=\s*\S)/, "").replace(/\s+/g, " ").trim();
@@ -64,6 +74,11 @@ export function validateStep(step: Step, packet: Packet, opts: { depth?: "concis
       if ((c.kind === "observed" || c.kind === "inferred") && cited.length && cited.every((i) => i.kind === "owner_note"))
         issues.push({ severity: "error", section, claim: short, message: "the owner's notes are not evidence of events; label this owner_stated" });
 
+      if ((MODEL_TEXT as readonly string[]).includes(section)) {
+        const found = shorthandIn(c.text);
+        if (found) issues.push({ severity: "error", section, claim: short, message: shorthandMessage(found) });
+      }
+
       // Test outcomes must agree with what was captured.
       const tests = cited.filter((i) => i.kind === "test");
       if (tests.length && c.kind !== "background") {
@@ -94,6 +109,11 @@ export function validateStep(step: Step, packet: Packet, opts: { depth?: "concis
           issues.push({ severity: "warning", section, claim: short, message: "its code is not in the captured evidence; it may be reconstructed or from a part that was cut" });
       }
     }
+  }
+
+  for (const field of ["title", "summary", "goal"] as const) {
+    const found = step.generatedBy !== "facts" && typeof step[field] === "string" ? shorthandIn(step[field] as string) : null;
+    if (found) issues.push({ severity: "error", section: field, message: shorthandMessage(found) });
   }
 
   // Depth: an explanation that only restates what happened has not taught anything.

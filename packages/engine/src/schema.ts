@@ -149,7 +149,8 @@ export function systemPrompt(depth: Depth, opts: { ownerNotes?: boolean } = {}):
   return `You are Dena's technical writer and teacher. You turn captured evidence of real project work into an instructional step: a how-to that teaches a reader who never saw the work to do the same thing themselves.
 
 Write it as a guide, not a report:
-- "title": the goal, as something to do ("Add an Update summary button that saves a draft"), not a description of what someone did.
+- "title": the goal, as something to do, in plain words a newcomer understands, about 4–10 words ("Add a button that saves a draft summary"). Say each idea once, and say what the reader will have, not how the code does it (not "Import transcripts into a project and attribute them to that project", but "Import only this project's Claude Code conversations").
+- "summary": one or two plain sentences on what this step gets done and why it is useful, for someone new to the project.
 - "goal" (What you'll build): one or two sentences on the result.
 - "prerequisites" (Before you start): what must already exist or be installed, as the evidence shows it. Empty if nothing special.
 - "instructions" (Steps): actions in imperative voice (the page numbers them; do not number them yourself) ("Add…", "Run…", "Change … in src/x.ts so that …"), in the order that works, each saying what to do, where, and briefly why. Put the exact command or code from the evidence in "code" (a few lines that matter, not whole files; "" when there is none). Follow the path that worked: leave dead ends out of the steps and put them in "pitfalls".
@@ -177,15 +178,19 @@ Rules:
 - "decisions": only choices the evidence shows were made. If alternatives were weighed, cite where. If none are shown, leave it empty.
 - "uncertainty": gaps in capture, ambiguous authorship, missing reasons, truncated evidence.
 ${owner ? `- OWNER NOTE items marked "the owner says this statement was incorrect" tell you what not to repeat; do not restate it unless new evidence shows it.\n` : ""}- Prefer clear, plain sentences to jargon; define terms in "concepts".
+- Never use the project's own shorthand as if the reader knows it: milestone or phase names ("M1", "phase 2"), branch names, ticket numbers, internal codenames. Say what it refers to in plain words, or leave it out. Titles and summaries never contain them.
 - Cite evidence by its reference, e.g. ["E3", "E7"]. Use only references that exist in the evidence you were given. Every claim except "background" needs at least one reference. Only cite an AGENT NOTE or AI RESPONSE for "agent_stated" claims.
 
 ${DEPTH_RULES[depth]}`;
 }
 
-export function userPrompt(projectName: string, episodeTitle: string, packetText: string, previous?: string, guide?: string): string {
+/** Said about the first recorded step: work before recording began is not in the evidence. */
+export const FIRST_STEP_NOTE = `This is the first recorded step of the project. Dena may have started recording partway through: if the evidence shows code, setup or plans that already existed, say once in "prerequisites" that this earlier work happened before recording began, and do not describe or guess at it.`;
+
+export function userPrompt(projectName: string, episodeTitle: string, packetText: string, previous?: string, guide?: string, first = false): string {
   return `Project: ${projectName}
 Episode: ${episodeTitle}
-${previous ? `\nContext: the previous step in this guide was "${previous}".\n` : ""}
+${previous ? `\nContext: the previous step in this guide was "${previous}".\n` : ""}${first ? `\n${FIRST_STEP_NOTE}\n` : ""}
 <evidence>
 ${packetText}
 </evidence>
@@ -211,10 +216,11 @@ export function referenceGuide(items: { ref: string; kind: string }[]): string {
   return `<reference_guide>\n${lines.join("\n")}\n</reference_guide>`;
 }
 
-export function batchPrompt(projectName: string, episodes: { id: string; title: string; packetText: string }[]): string {
+export function batchPrompt(projectName: string, episodes: { id: string; title: string; packetText: string; first?: boolean }[]): string {
+  const first = episodes.find((e) => e.first);
   return `Project: ${projectName}
 
 Explain each episode below separately, as its own step. Evidence references are local to each episode: E1 in one episode is unrelated to E1 in another. Return one step per episode, with "episode" set to its id.
-
+${first ? `\nAbout episode ${first.id}: ${FIRST_STEP_NOTE}\n` : ""}
 ${episodes.map((e) => `<episode id="${e.id}" title="${e.title.replace(/"/g, "'")}">\n<evidence>\n${e.packetText}\n</evidence>\n</episode>`).join("\n\n")}`;
 }

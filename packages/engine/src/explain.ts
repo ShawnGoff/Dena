@@ -130,7 +130,7 @@ export async function explainEpisode(store: Store, projectId: string, unitId: st
 
   const project = store.getProject(projectId)!;
   const ownerNotes = packet.items.some((i) => i.kind === "owner_note");
-  const prompt = userPrompt(project.name, title, renderPacket(packet), idx > 0 ? episodes[idx - 1]!.title : undefined, referenceGuide(packet.items));
+  const prompt = userPrompt(project.name, title, renderPacket(packet), idx > 0 ? episodes[idx - 1]!.title : undefined, referenceGuide(packet.items), idx === 0);
   const system = systemPrompt(depth, { ownerNotes });
   const schema = stepJsonSchema(ownerNotes);
   log(`sending ${packet.items.length} evidence items (${packet.chars} chars${packet.truncated ? ", some truncated" : ""}) to ${provider.name}${model ? ` [${model}]` : ""}, depth ${depth}`);
@@ -253,7 +253,9 @@ export async function explainMany(
   const maxUsd = opts.maxUsd ?? settingMax;
   const maxTokens = opts.maxTokens ?? settingTokens;
   const project = store.getProject(projectId)!;
-  const titles = new Map(loadEpisodes(store, projectId).map((e) => [e.id, e.title]));
+  const all = loadEpisodes(store, projectId);
+  const titles = new Map(all.map((e) => [e.id, e.title]));
+  const firstId = all[0]?.id; // the first recorded step is told that earlier work may not be recorded
   const result: BatchResult = { explained: [], skippedForBudget: [], spentUsd: 0, spentTokens: 0, calls: 0 };
   const done = (x: Explanation) => {
     result.explained.push(x);
@@ -293,7 +295,7 @@ export async function explainMany(
       small.length = 0;
       break;
     }
-    const prompt = batchPrompt(project.name, group.map((g) => ({ id: g.id, title: titles.get(g.id) ?? g.id, packetText: `${renderPacket(g.packet)}\n\n${referenceGuide(g.packet.items)}` })));
+    const prompt = batchPrompt(project.name, group.map((g) => ({ id: g.id, title: titles.get(g.id) ?? g.id, packetText: `${renderPacket(g.packet)}\n\n${referenceGuide(g.packet.items)}`, first: g.id === firstId })));
     log(`one call for ${group.length} small episodes (${chars} chars)`);
     let res;
     try {

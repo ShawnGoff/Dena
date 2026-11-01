@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { correlate, Store, type IngestBatch, type NewEvent } from "@dena/core";
 import {
   enqueue, exportGuideMarkdown, findOutdated, listJobs, processDueJobs,
-  activeRevision, addNote, adoptProposed, isRetryable, latestExplanations, proposedRevision, restoreRevision, revisions, RevisionConflict, saveUserEdit,
+  activeRevision, addNote, adoptProposed, batchPrompt, isRetryable, systemPrompt, userPrompt, latestExplanations, proposedRevision, restoreRevision, revisions, RevisionConflict, saveUserEdit,
   buildEpisodes, buildPacket, componentOf, ensureMemory, estimate, failingTests, loadMemory, explainEpisode, explainMany, rebuildEpisodes, renderPacket, renderStep, validateStep,
   type GenerateResult, type Provider, type Step,
 } from "../src/index.ts";
@@ -154,6 +154,15 @@ describe("validator", () => {
     const v = validateStep(goodStep(), packet());
     expect(v.issues.filter((i) => i.severity === "error")).toEqual([]);
     expect(v.citedShare).toBe(1);
+  });
+
+  it("catches the project's milestone shorthand, but not Apple's M-series chips", () => {
+    const step = goodStep();
+    step.title = "Finish M1: quoted fields";
+    step.howItWorks[0] = { ...step.howItWorks[0]!, text: `${step.howItWorks[0]!.text} This was planned for phase 2.` };
+    step.whyItMattered.push({ text: "It runs fine on an M1 Mac and an M2 Pro.", kind: "background", evidence: [] });
+    const msgs = validateStep(step, packet()).issues.filter((i) => i.message.includes("shorthand")).map((i) => `${i.section}: ${i.message.match(/"([^"]+)"/)![1]}`);
+    expect(msgs).toEqual(["howItWorks: phase 2", "title: M1"]);
   });
 
   it("catches invented evidence, uncited claims, wrong test outcomes, unsupported files and misused agent_stated", () => {
@@ -574,5 +583,17 @@ describe("test-outcome check wording", () => {
     expect(issues("The tests passed on the first run.", fail)).toBe(1);
     expect(issues("The suite failed after the change.", pass)).toBe(1);
     expect(issues("All 3 tests passed.", fail)).toBe(1);
+  });
+});
+
+describe("step writing instructions", () => {
+  it("ask for plain titles without the project's shorthand, and warn the first step about unrecorded earlier work", () => {
+    const sys = systemPrompt("concise");
+    expect(sys).toContain("about 4–10 words");
+    expect(sys).toContain('milestone or phase names ("M1"');
+    expect(userPrompt("p", "t", "E1", undefined, undefined, true)).toContain("first recorded step");
+    expect(userPrompt("p", "t", "E1", "earlier")).not.toContain("first recorded step");
+    const batch = batchPrompt("p", [{ id: "ep_a", title: "a", packetText: "E1", first: true }, { id: "ep_b", title: "b", packetText: "E1" }]);
+    expect(batch).toContain("About episode ep_a: This is the first recorded step");
   });
 });

@@ -278,6 +278,7 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 
 /* Wiki sources */
 .source { display: grid; grid-template-columns: 40px 1fr; gap: 8px; padding: 8px 10px; border-radius: 8px; font-size: 13.5px; line-height: 1.6; border: 1px solid transparent; }
+.source > .ref.static { align-self: start; justify-self: start; margin: 3px 0 0; padding: 1px 6px; line-height: 1.5; text-align: center; min-width: 30px; }
 .source.focused { background: var(--accent-soft); border-color: rgba(139, 156, 255, 0.35); }
 .side-label + .toc-item, .toc .side-label { margin-top: 4px; }
 

@@ -59,6 +59,9 @@ export function Activity({ projectId, onEvent }: { projectId: string; onEvent: (
   if (!sessions.length) return <div className="empty"><b>No AI activity yet</b>Start recording, or import past Claude Code sessions.</div>;
   const kinds = new Set(FILTERS.filter((f) => on.has(f.label)).flatMap((f) => f.kinds));
   const visible = s?.entries.filter((x) => kinds.has(x.kind)) ?? [];
+  // Busiest kinds first, so the filters read in order of how much of the session they cover.
+  const tally = (f: (typeof FILTERS)[number]) => s?.entries.reduce((n, x) => n + (f.kinds.includes(x.kind) ? x.count : 0), 0) ?? 0;
+  const ordered = [...FILTERS].sort((a, b) => tally(b) - tally(a));
   const toggle = (l: string) => setOn((prev) => {
     const n = new Set(prev);
     n.has(l) ? n.delete(l) : n.add(l);
@@ -101,8 +104,9 @@ export function Activity({ projectId, onEvent }: { projectId: string; onEvent: (
             <button className="btn" disabled={!s} onClick={exportMd}>Export (.md)</button>
           </div>
           <div className="filters">
-            {FILTERS.map((f) => (
-              <button key={f.label} className={`chip ${on.has(f.label) ? "on" : ""}`} aria-pressed={on.has(f.label)} onClick={() => toggle(f.label)}>{f.label}</button>
+            {ordered.map((f) => (
+              <button key={f.label} className={`chip ${on.has(f.label) ? "on" : ""}`} aria-pressed={on.has(f.label)} onClick={() => toggle(f.label)}>
+                {f.label}{s && <span className="faint"> {tally(f)}</span>}</button>
             ))}
           </div>
           {!s && <Loading />}

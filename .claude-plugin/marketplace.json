@@ -1,0 +1,11 @@
+{
+  "name": "dena",
+  "owner": { "name": "ShawnGoff" },
+  "plugins": [
+    {
+      "name": "dena",
+      "source": "./plugins/dena",
+      "description": "Live capture for Dena: exit codes, timings and the notes channel from Claude Code sessions."
+    }
+  ]
+}

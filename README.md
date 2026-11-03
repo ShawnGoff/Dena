@@ -79,6 +79,17 @@ dena hooks install my-app
 dena hooks install my-app --yes
 ```
 
+Or install the Dena plugin once for every project, from the folder you cloned
+([plugins/dena/README.md](plugins/dena/README.md)):
+
+```
+/plugin marketplace add <path to your Dena folder>
+/plugin install dena@dena
+```
+
+Use one or the other for a project, not both. Dena's first-run checklist (on its start page and
+Overview) shows what is still missing.
+
 Start Dena and open it in your browser:
 
 ```bash
@@ -194,3 +205,11 @@ npm run build:web   # rebuild the web interface after changing apps/web
 The code is an npm workspace: `packages/core` (event store), `packages/adapters` (capture),
 `packages/engine` (episodes, writing, checks, exports), `packages/server` (local API),
 `packages/cli`, `packages/hook` (the Claude Code hook) and `apps/web` (the interface).
+
+## License
+
+Dena is **source-available**, not open source. It is licensed under the
+[Business Source License 1.1](LICENSE). You may read, run, modify and use it for personal,
+educational, research and evaluation purposes. Commercial use (including selling it or offering
+it to others as a service) requires a separate commercial license from the author. On
+2030-11-03, each version converts to GPL-2.0-or-later.

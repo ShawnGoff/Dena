@@ -1,6 +1,7 @@
 {
   "name": "dena",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "bin": {
     "dena": "packages/cli/bin/dena.mjs"
@@ -13,7 +14,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json",
     "dena": "tsx packages/cli/src/index.ts",
-    "build:web": "npm run build -w @dena/web"
+    "build:web": "npm run build -w @dena/web",
+    "sync:plugin": "node scripts/sync-plugin.mjs"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

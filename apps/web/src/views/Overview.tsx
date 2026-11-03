@@ -3,6 +3,7 @@ import { api, catchUpText, type Overview as O } from "../api";
 import { Badge, EventRow, Loading } from "../components/Bits";
 import { SOURCE_LABEL, when } from "../format";
 import { GuideUpdates } from "../components/GuideUpdates";
+import { SetupChecklist } from "../components/SetupChecklist";
 
 export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId: string; refresh: number; onEvent: (id: number) => void; onEpisode: (id: string) => void }) {
   const [o, setO] = useState<O | null>(null);
@@ -26,6 +27,7 @@ export function Overview({ projectId, refresh, onEvent, onEpisode }: { projectId
 
   return (
     <div className="page">
+      <SetupChecklist />
       <div className="grid cols-4">
         <div className="card stat"><b>{total.toLocaleString()}</b><span>events captured</span></div>
         <div className="card stat"><b>{count("prompt_submitted")}</b><span>prompts across {o.stats.sessions} sessions</span></div>

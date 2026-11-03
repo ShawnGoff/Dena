@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, catchUpText, hasToken, type CatchUp, type Project } from "./api";
 import { EvidencePanel } from "./components/EvidencePanel";
+import { SetupChecklist } from "./components/SetupChecklist";
 import { Overview } from "./views/Overview";
 import { Search } from "./views/Search";
 import { Timeline } from "./views/Timeline";
@@ -108,6 +109,7 @@ export function App() {
       ) : (
         <div className="empty" style={{ paddingTop: 120 }}><b>No projects yet</b>Use “+ Add project” on the left to add a folder you work on with Claude Code.</div>
       )}
+      {!project && <div style={{ padding: "0 24px 24px" }}><SetupChecklist /></div>}
     </div>
   );
 }

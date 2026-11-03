@@ -1,6 +1,7 @@
 {
   "name": "dena",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "bin": {
     "dena": "packages/cli/bin/dena.mjs"

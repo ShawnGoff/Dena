@@ -5,6 +5,7 @@ import { createTwoFilesPatch, structuredPatch } from "diff";
 import { withoutPaused } from "../paused.ts";
 import {
   DEFAULT_EXCLUDED_DIRS,
+  toPosix,
   isSensitivePath,
   redactText,
   sha256,
@@ -90,7 +91,7 @@ export class FsCapture {
       }
       for (const e of entries) {
         const abs = path.join(dir, e.name);
-        const rel = path.relative(this.root, abs);
+        const rel = toPosix(path.relative(this.root, abs));
         if (this.isExcluded(rel)) continue;
         if (e.isDirectory()) visit(abs);
         else if (e.isFile()) out.push(rel);
@@ -145,7 +146,7 @@ export class FsCapture {
   start(): void {
     this.watcher = fs.watch(this.root, { recursive: true }, (_type, filename) => {
       if (!filename) return;
-      const rel = filename.toString();
+      const rel = toPosix(filename.toString()); // Windows reports "src\\app.ts"
       if (this.isExcluded(rel)) return;
       this.pending.add(rel);
       clearTimeout(this.timers.get(rel));

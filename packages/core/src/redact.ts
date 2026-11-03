@@ -97,7 +97,14 @@ const SENSITIVE_PATH_PATTERNS: RegExp[] = [
   /(^|\/)\.git-credentials$/i,
 ];
 
+/**
+ * A project-relative path with forward slashes on every system. Dena stores and compares paths
+ * this way (as git does); Windows would otherwise give "src\\app.ts".
+ */
+export const toPosix = (p: string): string => p.replace(/\\/g, "/");
+
 export function isSensitivePath(p: string): boolean {
+  p = toPosix(p);
   if (/\.env\.(example|sample|template)$/i.test(p)) return false;
   return SENSITIVE_PATH_PATTERNS.some((re) => re.test(p));
 }

@@ -98,7 +98,9 @@ const bySid = (sid: string) => result.batch.events.find((e) => e.sourceEventId =
 
 describe("Claude Code transcript import", () => {
   it("encodes project dirs the way Claude Code does", () => {
-    expect(encodeProjectDir("/Users/a/Claude/Projects/Rogue Radio Overlay")).toBe("-Users-a-Claude-Projects-Rogue-Radio-Overlay");
+    // Every character that is not a letter or digit becomes "-", drive letter colon and backslashes included.
+    if (process.platform === "win32") expect(encodeProjectDir("C:\\Users\\a\\Claude\\Rogue Radio")).toBe("C--Users-a-Claude-Rogue-Radio");
+    else expect(encodeProjectDir("/Users/a/Claude/Projects/Rogue Radio Overlay")).toBe("-Users-a-Claude-Projects-Rogue-Radio-Overlay");
   });
 
   it("captures prompts as user actions and redacts secrets in them", () => {

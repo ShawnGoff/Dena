@@ -18,9 +18,16 @@ export interface UsedFolder {
 
 /** Places that are not projects: temporary folders, app data, your home folder itself. */
 export function isWorkFolder(dir: string, home = os.homedir()): boolean {
+  if (!path.isAbsolute(dir)) return false;
   const d = path.resolve(dir);
-  if (d === home || d === "/" || !d.startsWith("/")) return false;
-  return ![/^\/(private\/)?tmp(\/|$)/, /^\/private\/var\//, /^\/var\/folders\//, /\/Library\//, /\/\.claude(\/|$)/, /\/\.Trash(\/|$)/, /\/node_modules(\/|$)/].some((re) => re.test(d));
+  if (d === path.resolve(home) || d === path.parse(d).root) return false;
+  // Compared with forward slashes, so one list covers macOS, Linux and Windows ("C:/Users/…").
+  const posix = (x: string) => x.replace(/\\/g, "/").replace(/^[A-Za-z]:/, "");
+  const p = posix(d);
+  const tmp = posix(path.resolve(os.tmpdir()));
+  if (p === tmp || p.startsWith(`${tmp}/`)) return false;
+  return ![/^\/(private\/)?tmp(\/|$)/, /^\/private\/var\//, /^\/var\/folders\//, /\/Library\//, /\/AppData\//i, /\/\.claude(\/|$)/, /\/\.Trash(\/|$)/, /\/\$Recycle\.Bin(\/|$)/i, /\/node_modules(\/|$)/]
+    .some((re) => re.test(p));
 }
 
 function cwdOf(file: string): string | null {

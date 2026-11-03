@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -61,8 +61,12 @@ export class StoppedError extends Error {
 /** Finds a Claude Code binary: $DENA_CLAUDE_BIN, `claude` on PATH, or the desktop app's bundled CLI (newest). */
 export function findClaudeBinary(): string | null {
   if (process.env.DENA_CLAUDE_BIN && fs.existsSync(process.env.DENA_CLAUDE_BIN)) return process.env.DENA_CLAUDE_BIN;
-  const which = spawnSync("which", ["claude"], { encoding: "utf8" });
-  if (which.status === 0 && which.stdout.trim()) return which.stdout.trim();
+  // Windows: `where` lists claude.exe (native installer) and/or claude.cmd (npm); prefer the .exe.
+  const which = process.platform === "win32" ? spawnSync("where", ["claude"], { encoding: "utf8", windowsHide: true }) : spawnSync("which", ["claude"], { encoding: "utf8" });
+  if (which.status === 0 && which.stdout.trim()) {
+    const found = which.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    return found.find((p) => /\.exe$/i.test(p)) ?? found.find((p) => /\.cmd$/i.test(p)) ?? found[0]!;
+  }
   const base = path.join(os.homedir(), "Library", "Application Support", "Claude", "claude-code");
   if (!fs.existsSync(base)) return null;
   const versions = fs.readdirSync(base).filter((v) => /^\d+\.\d+\.\d+$/.test(v))
@@ -73,6 +77,32 @@ export function findClaudeBinary(): string | null {
       if (fs.existsSync(bin)) return bin;
     }
   return null;
+}
+
+/**
+ * The command that runs a Claude Code binary. A script ending in .js runs with this Node; on
+ * Windows an npm `claude.cmd` shim is replaced by the script it wraps, because a .cmd file can only
+ * run through cmd.exe, which would re-read every argument (the long prompts) as shell text.
+ */
+export function claudeCommand(bin: string): { file: string; prefix: string[] } {
+  if (/\.(c|m)?js$/i.test(bin)) return { file: process.execPath, prefix: [bin] };
+  if (/\.(cmd|bat)$/i.test(bin)) {
+    const cli = path.join(path.dirname(bin), "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+    if (fs.existsSync(cli)) return { file: process.execPath, prefix: [cli] };
+    throw new Error(`Dena cannot run ${bin} directly. Set DENA_CLAUDE_BIN to Claude Code's claude.exe (or its cli.js).`);
+  }
+  return { file: bin, prefix: [] };
+}
+
+/** Ends a process and everything it started: its process group on macOS and Linux, its process tree on Windows. */
+export function killTree(pid: number | undefined, fallback: () => void): void {
+  try {
+    if (!pid) return fallback();
+    if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+    else process.kill(-pid, "SIGTERM");
+  } catch {
+    fallback();
+  }
 }
 
 /**
@@ -169,15 +199,16 @@ export class ClaudeCodeProvider implements Provider {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "dena-gen-"));
     return new Promise((resolve, reject) => {
       const auth = this.opts.auth ?? "account";
-      // Its own process group, so Stop and the timeout end everything it started, not just the top process.
-      const child = spawn(this.bin!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: childEnv(auth), detached: true });
-      const killAll = () => {
-        try {
-          if (child.pid) process.kill(-child.pid, "SIGTERM");
-        } catch {
-          child.kill("SIGTERM");
-        }
-      };
+      // Its own process group (macOS, Linux), so Stop and the timeout end everything it started, not just the top process.
+      let child: ChildProcessWithoutNullStreams;
+      try {
+        const cmd = claudeCommand(this.bin!);
+        child = spawn(cmd.file, [...cmd.prefix, ...args], { cwd, stdio: ["pipe", "pipe", "pipe"], env: childEnv(auth), detached: process.platform !== "win32", windowsHide: true });
+      } catch (e) {
+        fs.rmSync(cwd, { recursive: true, force: true });
+        return reject(e);
+      }
+      const killAll = () => killTree(child.pid, () => child.kill("SIGTERM"));
       let settled = false;
       const finish = (fn: () => void) => {
         if (settled) return;
@@ -306,7 +337,13 @@ export interface AuthStatus {
 /** What Claude Code would sign in with when Dena launches it, checked with Dena's exact environment. */
 export function claudeAuthStatus(auth: ClaudeAuth, bin = findClaudeBinary()): AuthStatus {
   if (!bin) return { found: false, loggedIn: false, method: null, detail: "Claude Code was not found on this computer." };
-  const r = spawnSync(bin, ["auth", "status"], { encoding: "utf8", env: childEnv(auth), timeout: 20_000, cwd: os.tmpdir() });
+  let r: SpawnSyncReturns<string>;
+  try {
+    const cmd = claudeCommand(bin);
+    r = spawnSync(cmd.file, [...cmd.prefix, "auth", "status"], { encoding: "utf8", env: childEnv(auth), timeout: 20_000, cwd: os.tmpdir(), windowsHide: true });
+  } catch (e) {
+    return { found: true, loggedIn: false, method: null, detail: (e as Error).message };
+  }
   try {
     const o = JSON.parse(r.stdout);
     const method = o.authMethod ?? null;

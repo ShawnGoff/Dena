@@ -230,7 +230,7 @@ describe("transcriptsIn", () => {
     fs.mkdirSync(path.join(d, "s", "subagents"), { recursive: true });
     fs.writeFileSync(path.join(d, "s", "subagents", "agent-1.jsonl"), "");
     fs.writeFileSync(path.join(d, "s", "custom-title.json"), "{}");
-    expect(transcriptsIn(d).map((f) => path.relative(d, f)).sort()).toEqual(["s.jsonl", "s/subagents/agent-1.jsonl"]);
+    expect(transcriptsIn(d).map((f) => path.relative(d, f).replace(/\\/g, "/")).sort()).toEqual(["s.jsonl", "s/subagents/agent-1.jsonl"]);
     fs.rmSync(d, { recursive: true, force: true });
   });
 });

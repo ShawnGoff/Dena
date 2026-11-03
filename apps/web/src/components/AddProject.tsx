@@ -10,6 +10,8 @@ interface Added {
 }
 
 const shortPath = (p: string) => p.replace(/^\/Users\/[^/]+/, "~");
+/** The last folder name, for macOS/Linux ("/a/b") and Windows ("C:\\a\\b") paths alike. */
+const folderName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? "";
 
 /**
  * Adding projects: by folder, or from folders Dena noticed you used with Claude Code. Adding
@@ -32,7 +34,7 @@ export function ProjectAdder({ onAdded }: { onAdded: (p: Project) => void }) {
           <div className="side-label" title="Folders where you used Claude Code that Dena doesn't know yet. Nothing is recorded from them until you add one.">Worked in recently</div>
           {folders.slice(0, 4).map((f) => (
             <div key={f.path} className="suggest-row">
-              <span className="suggest-name" title={f.path}>{f.path.split("/").pop()}<small>{f.sessions} {f.sessions === 1 ? "session" : "sessions"} · {when(f.lastUsed).replace(/,.*$/, "")}</small></span>
+              <span className="suggest-name" title={f.path}>{folderName(f.path)}<small>{f.sessions} {f.sessions === 1 ? "session" : "sessions"} · {when(f.lastUsed).replace(/,.*$/, "")}</small></span>
               <span className="suggest-actions">
                 <button className="linkish small" onClick={() => setOpen(f.path)}>Add</button>
                 <button className="linkish small faint" onClick={() => dismiss(f.path)} title="Don't suggest this folder again">Not now</button>
@@ -48,7 +50,7 @@ export function ProjectAdder({ onAdded }: { onAdded: (p: Project) => void }) {
 
 function AddDialog({ initial, onClose, onAdded }: { initial: string; onClose: () => void; onAdded: (p: Project) => void }) {
   const [path, setPath] = useState(initial ? shortPath(initial) : "");
-  const [name, setName] = useState(initial ? initial.split("/").pop()! : "");
+  const [name, setName] = useState(initial ? folderName(initial) : "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<Added | null>(null);
@@ -82,11 +84,11 @@ function AddDialog({ initial, onClose, onAdded }: { initial: string; onClose: ()
               No AI is used, and nothing is sent anywhere.</p>
             <label className="field"><span className="faint small">Folder</span>
               <span className="row" style={{ gap: 6 }}>
-                <input style={{ flex: 1 }} value={path} onChange={(e) => { setPath(e.target.value); if (!name || name === path.split("/").pop()) setName(e.target.value.split("/").filter(Boolean).pop() ?? ""); }}
+                <input style={{ flex: 1 }} value={path} onChange={(e) => { setPath(e.target.value); if (!name || name === folderName(path)) setName(folderName(e.target.value)); }}
                   placeholder="~/code/my-app" autoFocus={!initial} spellCheck={false} />
                 <button className="btn" type="button" onClick={() => setBrowsing(!browsing)}>{browsing ? "Close" : "Browse…"}</button>
               </span></label>
-            {browsing && <FolderBrowser start={path} onPick={(p) => { setPath(shortPath(p)); setName(p.split("/").pop() ?? ""); setBrowsing(false); }} />}
+            {browsing && <FolderBrowser start={path} onPick={(p) => { setPath(shortPath(p)); setName(folderName(p)); setBrowsing(false); }} />}
             <label className="field"><span className="faint small">Name</span>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-app" /></label>
           </>

@@ -14,7 +14,8 @@ describe("starting Dena", () => {
   it("keeps the same key between runs, readable only by you, until asked for a new one", () => {
     const a = serverKey(home);
     expect(serverKey(home)).toBe(a);
-    expect(fs.statSync(path.join(home, "server-key")).mode & 0o777).toBe(0o600);
+    // Owner-only file modes are a macOS/Linux idea; Windows keeps a file in the user's own profile instead.
+    if (process.platform !== "win32") expect(fs.statSync(path.join(home, "server-key")).mode & 0o777).toBe(0o600);
     const b = serverKey(home, { renew: true });
     expect(b).not.toBe(a);
     expect(serverKey(home)).toBe(b);

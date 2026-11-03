@@ -71,19 +71,35 @@ describe("standing limitations", () => {
 describe("stopping a generation", () => {
   it("ends the model process itself, quickly, and saves nothing", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dena-fakeclaude-"));
-    const bin = path.join(dir, "claude");
-    fs.writeFileSync(bin, "#!/bin/sh\nsleep 10\necho '{}'\n", { mode: 0o755 }); // a "model" that would take 10 seconds
+    // A "model" that would take 10 seconds, and starts a helper process of its own (written in Node, so it runs everywhere).
+    const bin = path.join(dir, "claude.mjs");
+    const pidFile = path.join(dir, "helper.pid");
+    fs.writeFileSync(bin, `import { spawn } from "node:child_process";
+import fs from "node:fs";
+const helper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], { stdio: "ignore" });
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(helper.pid));
+setTimeout(() => console.log("{}"), 10000);
+`);
     const provider = new ClaudeCodeProvider(bin);
     const controller = new AbortController();
     const started = Date.now();
     const call = provider.generate("s", "u", {}, { signal: controller.signal });
-    setTimeout(() => controller.abort(), 150);
+    // Stop once the fake has started its helper (Node starts more slowly on Windows).
+    const ready = setInterval(() => fs.existsSync(pidFile) && (clearInterval(ready), controller.abort()), 50);
     await expect(call).rejects.toBeInstanceOf(StoppedError);
     expect(Date.now() - started).toBeLessThan(3_000);
-    // The whole process group is gone, including the `sleep` the script started.
-    await new Promise((r) => setTimeout(r, 300));
-    const { execSync } = await import("node:child_process");
-    expect(execSync(`ps -axo command | grep -c "[s]leep 10" || true`, { encoding: "utf8" }).trim()).toBe("0");
+    // Everything it started is gone too, including its helper process.
+    await new Promise((r) => setTimeout(r, 800));
+    const helper = Number(fs.readFileSync(pidFile, "utf8"));
+    const alive = (() => {
+      try {
+        process.kill(helper, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    expect(alive).toBe(false);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

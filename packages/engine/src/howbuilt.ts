@@ -1,5 +1,5 @@
 import path from "node:path";
-import { effectiveTest, type StoredEvent, type Store } from "@dena/core";
+import { effectiveTest, toPosix, type StoredEvent, type Store } from "@dena/core";
 import { activityForEvents, DEFAULT_KINDS, type ActivityEntry } from "./activity.ts";
 import { episodeEvents } from "./episodes.ts";
 
@@ -40,7 +40,7 @@ export function howBuiltPage(store: Store, projectId: string, key: string): HowB
   const root = store.getProject(projectId)!.rootPath;
   const folder = key.startsWith("component:") ? key.slice("component:".length) : null;
   const inScope = (file: string) => {
-    const rel = path.isAbsolute(file) ? path.relative(root, file) : file;
+    const rel = toPosix(path.isAbsolute(file) ? path.relative(root, file) : file);
     if (rel.startsWith("..")) return false;
     return !folder || (folder === "(project root)" ? !rel.includes("/") : rel.startsWith(`${folder}/`));
   };

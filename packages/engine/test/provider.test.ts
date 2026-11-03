@@ -57,13 +57,15 @@ describe("plain JSON answers", () => {
       '{"type":"result","subtype":"success","result":"{\\"title\\": \\"t\\", \\"refs\\": [\\"E1\\"], \\"kind\\": \\"observed\\"}","usage":{"input_tokens":100,"cache_read_input_tokens":90,"output_tokens":12}}',
     ];
     fs.writeFileSync(path.join(dir, "replies"), replies.join("\n"));
-    const bin = path.join(dir, "claude");
-    fs.writeFileSync(bin, `#!/bin/sh
-case " $* " in *" --json-schema "*) echo tool >> "${log}";; *) echo text >> "${log}";; esac
-cat > /dev/null
-n=$(wc -l < "${log}")
-sed -n "\${n}p" "${dir}/replies"
-`, { mode: 0o755 });
+    // Written in Node (run by Dena with this Node), so the same fake works on macOS, Linux and Windows.
+    const bin = path.join(dir, "claude.mjs");
+    fs.writeFileSync(bin, `import fs from "node:fs";
+const log = ${JSON.stringify(log)};
+fs.appendFileSync(log, (process.argv.includes("--json-schema") ? "tool" : "text") + "\\n");
+fs.readFileSync(0);
+const n = fs.readFileSync(log, "utf8").trim().split("\\n").length;
+process.stdout.write(fs.readFileSync(${JSON.stringify(path.join(dir, "replies"))}, "utf8").split("\\n")[n - 1] + "\\n");
+`);
     const r = await new ClaudeCodeProvider(bin).generate("system", "user", schema);
     expect(r.json).toEqual({ title: "t", refs: ["E1"], kind: "observed" });
     expect(r.calls).toBe(2);

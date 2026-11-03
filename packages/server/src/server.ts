@@ -221,14 +221,20 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     // Browse folders inside your home folder, to pick one to add. Names only; nothing is read inside them.
     if (parts[0] === "browse" && parts.length === 1 && method === "GET") {
       const home = fs.realpathSync(os.homedir());
-      const asked = String(url.searchParams.get("path") ?? "").replace(/^~(?=\/|$)/, home) || home;
+      const asked = String(url.searchParams.get("path") ?? "").replace(/^~(?=[\\/]|$)/, home) || home;
+      // Inside home, on any system ("C:\\Users\\me\\code" as well as "/Users/me/code"); checked before and after resolving links.
+      const inHome = (p: string) => {
+        const r = path.relative(home, p);
+        return r === "" || (!r.startsWith("..") && !path.isAbsolute(r));
+      };
+      if (!inHome(path.resolve(asked))) throw new HttpError(403, "Browsing is limited to your home folder");
       let dir: string;
       try {
         dir = fs.realpathSync(asked);
       } catch {
         throw new HttpError(404, "That folder does not exist");
       }
-      if (dir !== home && !dir.startsWith(`${home}/`)) throw new HttpError(403, "Browsing is limited to your home folder");
+      if (!inHome(dir)) throw new HttpError(403, "Browsing is limited to your home folder");
       const used = new Set(foldersUsedWithClaude(opts.recorder?.claudeHome).map((f) => f.path));
       const known = new Set(store.listProjects().map((x) => x.rootPath));
       let entries: fs.Dirent[] = [];
@@ -248,7 +254,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
 
     // Add a project and import its past: Claude Code's transcripts and git history. No model is used.
     if (parts.length === 1 && parts[0] === "projects" && method === "POST") {
-      const raw = String(body?.path ?? "").trim().replace(/^~(?=\/|$)/, os.homedir());
+      const raw = String(body?.path ?? "").trim().replace(/^~(?=[\\/]|$)/, os.homedir()); // "~/code" or, on Windows, "~\\code"
       if (!raw || !path.isAbsolute(raw)) throw new HttpError(400, "Give the folder's full path, like ~/code/my-app");
       let dir: string;
       try {

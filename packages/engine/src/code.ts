@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { z } from "zod";
-import { DEFAULT_EXCLUDED_DIRS, isSensitivePath, likelyAuthors, redactText, sha256, type StoredEvent, type Store } from "@dena/core";
+import { DEFAULT_EXCLUDED_DIRS, isSensitivePath, likelyAuthors, redactText, sha256, toPosix, type StoredEvent, type Store } from "@dena/core";
 import { addTokens, StoppedError, type Provider, type TokenUsage } from "./provider.ts";
 import { estimateTokens, type TokenEstimate } from "./tokens.ts";
 
@@ -595,14 +595,16 @@ export function fileHistory(store: Store, projectId: string, file: string, text:
   const root = store.getProject(projectId)!.rootPath;
   const abs = path.join(root, file);
   const like = `%${file.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+  // A tool call on Windows names the file with backslashes, which JSON stores doubled ("src\\\\csv.ts").
+  const likeWin = `%${file.replace(/[%_]/g, (c) => `\\${c}`).replace(/\//g, "\\\\\\\\")}%`;
   const rows = store.db
     .prepare(`SELECT id FROM event WHERE project_id = ? AND (
-                (event_type = 'tool_invoked' AND payload_json LIKE ? ESCAPE '\\')
+                (event_type = 'tool_invoked' AND (payload_json LIKE ? ESCAPE '\\' OR payload_json LIKE ? ESCAPE '\\'))
              OR (event_type IN ('file_created','file_modified','file_deleted') AND payload_json LIKE ? ESCAPE '\\')
              OR (event_type = 'git_commit' AND payload_json LIKE ? ESCAPE '\\')
              OR (event_type = 'agent_note' AND (payload_json LIKE ? ESCAPE '\\' OR payload_json LIKE ? ESCAPE '\\')))
               ORDER BY occurred_at, id`)
-    .all(projectId, like, like, like, like, `%${path.basename(file).replace(/[%_]/g, (c) => `\\${c}`)}%`) as { id: number }[];
+    .all(projectId, like, likeWin, like, like, like, `%${path.basename(file).replace(/[%_]/g, (c) => `\\${c}`)}%`) as { id: number }[];
   const likely = likelyAuthors(store, projectId, rows.map((r) => r.id));
   const events = store.eventsById(projectId, rows.map((r) => r.id)).sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id - b.id);
   const who = (e: StoredEvent): HistoryEntry["who"] => (e.actor === "user" ? "you" : (e.payload as any).sidechain ? "subagent" : e.actor === "ai_agent" ? "ai" : "unknown");
@@ -626,7 +628,7 @@ export function fileHistory(store: Store, projectId: string, file: string, text:
     if (e.eventType === "tool_invoked") {
       const input = (p.input ?? {}) as Record<string, any>;
       const target = String(input.file_path ?? input.notebook_path ?? "");
-      if (target !== abs && target !== file) continue;
+      if (target !== abs && target !== file && (!target || toPosix(path.relative(root, path.resolve(root, target))) !== file)) continue;
       if (!["Edit", "MultiEdit", "Write", "NotebookEdit"].includes(String(p.tool))) continue;
       precedingPrompt(e);
       if (e.sessionId) sessions.add(e.sessionId);

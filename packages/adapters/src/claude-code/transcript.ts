@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import {
+  toPosix,
   isSensitivePath,
   newReport,
   redactDeep,
@@ -216,7 +217,7 @@ export async function importTranscript(
     if (typeof p !== "string" || !p) return null;
     const abs = path.resolve(root, p);
     const r = path.relative(root, abs);
-    return r.startsWith("..") || path.isAbsolute(r) ? { path: abs, outsideRoot: true } : { path: r, outsideRoot: false };
+    return r.startsWith("..") || path.isAbsolute(r) ? { path: abs, outsideRoot: true } : { path: toPosix(r), outsideRoot: false };
   };
 
   const report: ImportReport = {

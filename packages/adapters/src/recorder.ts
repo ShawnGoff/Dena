@@ -171,8 +171,10 @@ export class Recorder {
   /** What starting again recovered from while Dena was off, for the page to show. Counted, never written by a model. */
   private recordCatchUp(afterId: number, from: string, to: string) {
     const count = (where: string, what = "*") => (this.store.db
-      .prepare(`SELECT COUNT(${what}) n FROM event WHERE project_id = ? AND id > ? AND occurred_at <= ? AND source NOT LIKE 'dena%' AND ${where}`)
-      .get(this.projectId, afterId, to) as { n: number }).n;
+      // Everything this start added. Not filtered by time: a file's own timestamp can be a little ahead
+      // of the clock (seen on Windows), and offline changes are dated by the file, not by when Dena saw them.
+      .prepare(`SELECT COUNT(${what}) n FROM event WHERE project_id = ? AND id > ? AND source NOT LIKE 'dena%' AND ${where}`)
+      .get(this.projectId, afterId) as { n: number }).n;
     const prompts = "event_type = 'prompt_submitted' AND actor = 'user'";
     this.store.setCursor(this.projectId, "dena", "last_catch_up", JSON.stringify({
       from, to, at: new Date().toISOString(),

@@ -254,7 +254,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
 
     // Add a project and import its past: Claude Code's transcripts and git history. No model is used.
     if (parts.length === 1 && parts[0] === "projects" && method === "POST") {
-      const raw = String(body?.path ?? "").trim().replace(/^~(?=\/|$)/, os.homedir());
+      const raw = String(body?.path ?? "").trim().replace(/^~(?=[\\/]|$)/, os.homedir()); // "~/code" or, on Windows, "~\\code"
       if (!raw || !path.isAbsolute(raw)) throw new HttpError(400, "Give the folder's full path, like ~/code/my-app");
       let dir: string;
       try {

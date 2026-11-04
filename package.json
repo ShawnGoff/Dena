@@ -15,12 +15,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json",
     "dena": "tsx packages/cli/src/index.ts",
     "build:web": "npm run build -w @dena/web",
-    "sync:plugin": "node scripts/sync-plugin.mjs"
+    "sync:plugin": "node scripts/sync-plugin.mjs",
+    "build:npm": "node scripts/build-npm.mjs"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/diff": "^7.0.2",
     "@types/node": "^22.10.0",
+    "esbuild": "^0.28.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^3.0.0"

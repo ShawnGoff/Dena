@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { redactText, type IngestBatch, type Store } from "@dena/core";
+import { denaRoot, redactText, type IngestBatch, type Store } from "@dena/core";
 import { SOURCE as TRANSCRIPT_SOURCE, importTranscript } from "./transcript.ts";
 import { withoutPaused } from "../paused.ts";
 
@@ -18,7 +17,7 @@ import { withoutPaused } from "../paused.ts";
  */
 
 export const SOURCE = "claude_code.hooks";
-export const HOOK_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../hook/dena-hook.mjs");
+export const HOOK_SCRIPT = path.join(denaRoot(), "packages", "hook", "dena-hook.mjs");
 
 export interface HookRecord {
   received_at: string;

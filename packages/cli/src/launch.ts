@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { denaRoot, isBundled } from "@dena/core";
 
 /**
  * Starting Dena and getting to its page without hunting for a link:
@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
  * - a macOS login item that keeps Dena (and recording) running in the background.
  */
 
-const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const REPO = denaRoot();
 
 /**
  * The key the page's link carries. Kept in Dena's folder, readable only by you: other web pages in
@@ -98,8 +98,10 @@ export function stableNode(execPath = process.execPath): string {
 
 /** What the login item runs: this repo's Dena, with the same Node, Dena folder and port. */
 export function servicePlan(home: string, port: number): { file: string; plist: string; command: string[]; log: string } {
-  const tsx = path.join(REPO, "node_modules", "tsx", "dist", "cli.mjs");
-  const command = [stableNode(), tsx, path.join(REPO, "packages", "cli", "src", "index.ts"), "serve", "--port", String(port)];
+  // From the source tree, tsx runs the TypeScript entry; from the installed package, the bundle runs directly.
+  const entry = isBundled() ? [path.join(REPO, "packages", "cli", "dist", "dena.mjs")]
+    : [path.join(REPO, "node_modules", "tsx", "dist", "cli.mjs"), path.join(REPO, "packages", "cli", "src", "index.ts")];
+  const command = [stableNode(), ...entry, "serve", "--port", String(port)];
   const log = path.join(home, "logs", "server.log");
   const env: Record<string, string> = {
     // Login items start with almost no PATH; these are where Node, git and Claude Code usually live.

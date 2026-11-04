@@ -6,3 +6,4 @@ node_modules/
 # Real transcripts never get committed; tests use synthetic fixtures only.
 fixtures/private/
 apps/web/dist/
+build/

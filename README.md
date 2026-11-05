@@ -208,8 +208,6 @@ The code is an npm workspace: `packages/core` (event store), `packages/adapters`
 
 ## License
 
-Dena is **source-available**, not open source. It is licensed under the
-[Business Source License 1.1](LICENSE). You may read, run, modify and use it for personal,
-educational, research and evaluation purposes. Commercial use (including selling it or offering
-it to others as a service) requires a separate commercial license from the author. On
-2030-11-03, each version converts to GPL-2.0-or-later.
+Dena is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). You may read, run,
+modify and share it for noncommercial purposes. Commercial use (including selling it or offering
+it to others as a service) requires a separate license from the author.

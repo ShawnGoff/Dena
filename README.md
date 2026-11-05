@@ -43,6 +43,19 @@ Dena labels it so you can check, and never invents history it did not capture.
 
 ## Getting started
 
+### Install from npm
+
+```bash
+npm install -g dena-guide
+dena serve --open
+```
+
+`dena serve --open` starts Dena and opens its page in your browser. Before removing the package
+(`npm uninstall -g dena-guide`), run `dena hooks uninstall <project>` for each project with live
+capture on: the hooks point into the installed package, so they stop working once it is removed.
+
+### Run from source
+
 ```bash
 git clone https://github.com/ShawnGoff/Dena.git
 cd Dena

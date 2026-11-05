@@ -52,10 +52,14 @@ const pkg = {
   version: process.env.DENA_VERSION ?? "0.1.0",
   description: "Turns your Claude Code activity into a readable, evidence-linked guide to what was built and how.",
   license: rootPkg.license,
+  author: "Shawn Goff",
+  homepage: "https://github.com/ShawnGoff/Dena#readme",
+  repository: { type: "git", url: "git+https://github.com/ShawnGoff/Dena.git" },
+  bugs: { url: "https://github.com/ShawnGoff/Dena/issues" },
   type: "module",
   bin: { dena: "packages/cli/bin/dena.mjs" },
   engines: { node: ">=22" },
-  files: ["packages", "apps/web/dist", "README.md", "LICENSE"],
+  files: ["packages", "apps/web/dist", "README.md", "LICENSE", "CHANGELOG.md", "SECURITY.md"],
   dependencies: {
     "better-sqlite3": `^${depVersion("better-sqlite3")}`,
     typescript: `^${depVersion("typescript")}`,
@@ -65,5 +69,6 @@ const pkg = {
 fs.writeFileSync(path.join(out, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
 fs.copyFileSync(rel("README.md"), path.join(out, "README.md"));
 fs.copyFileSync(rel("LICENSE"), path.join(out, "LICENSE"));
+for (const f of ["CHANGELOG.md", "SECURITY.md"]) fs.copyFileSync(rel(f), path.join(out, f));
 
 console.log(`built ${path.relative(root, out)} (${pkg.name}@${pkg.version})`);

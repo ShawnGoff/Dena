@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Badge, Loading } from "../components/Bits";
 import { KIND } from "../components/StepView";
@@ -10,6 +10,8 @@ import { isStandingLimitationText, tokenLine, tokenRange, when } from "../format
 import { AboutGuide } from "../components/AboutGuide";
 import { HowBuilt } from "../components/HowBuilt";
 import { TutorialDialog } from "../components/TutorialDialog";
+import { Presenter } from "../components/Presenter";
+import { narrateWiki } from "../narrate";
 
 interface PageInfo { key: string; title: string; sources: number; chars: number; generated: boolean; stale: boolean; model: string | null }
 interface Source { ref: string; type: "fact" | "claim" | "code"; grade: keyof typeof KIND; text: string; unitId: string | null; eventIds: number[]; files?: string[] }
@@ -149,6 +151,7 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
   const s: Stored | null = rev ? { section: rev.content, sources: rev.meta.sources ?? [], validation: rev.meta.validation, model: rev.meta.model ?? null,
     costUsd: rev.meta.costUsd ?? null, attempts: rev.meta.attempts ?? 1, createdAt: rev.createdAt, stale: viewing == null && doc.stale } : null;
   const editable = viewing == null && !!doc.active;
+
   const flagged = new Set(s?.validation.issues.filter((i) => i.severity === "error" && i.claim).map((i) => i.claim!) ?? []);
   const cited = s ? new Set(s.section.sections.flatMap((x) => x.claims.flatMap((c) => c.evidence))) : new Set<string>();
 
@@ -181,14 +184,15 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
         onRewrite={() => writeFull(true)} projectModel={r.settings.model} />}
       {s && (
         <article className="step">
-          <h2 className="step-title">{s.section.title}</h2>
+          <WikiListen content={s.section} numbered={tutorial} />
+          <h2 className="step-title" data-narr="title">{s.section.title}</h2>
           <div className="ai-notice">
             <b>Written by AI from what Dena recorded. It can be wrong.</b> Each statement is labeled and cites sources like <span className="ref static">S3</span>.
             A source is a <b>fact</b> Dena counted from captured events, a <b>claim</b> from a step's explanation, or text from the project's own <b>files</b>; each lists the events or file behind it.
           </div>
-          <p className="step-summary">{s.section.summary}</p>
-          {s.section.sections.map((sec) => (
-            <section key={sec.heading} className="step-section">
+          <p className="step-summary" data-narr="summary">{s.section.summary}</p>
+          {s.section.sections.map((sec, si) => (
+            <section key={sec.heading} className="step-section" data-narr={`section:${si}`}>
               <h3>{sec.heading}</h3>
               <ClaimList claims={sec.claims} flaggedByChecks={flagged} editable={editable} numbered={tutorial}
                 refs={(c) => c.evidence.map((ref) => <button key={ref} className="ref" onClick={() => goSource(ref)} title="Show this source">{ref}</button>)}
@@ -205,10 +209,10 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
             </section>
           ))}
           {s.section.uncertainty.filter((u) => !isStandingLimitationText(u)).length > 0 && (
-            <section className="step-section"><h3>What is uncertain</h3><ul className="plain">{s.section.uncertainty.filter((u) => !isStandingLimitationText(u)).map((u, i) => <li key={i}>{u}</li>)}</ul></section>
+            <section className="step-section" data-narr="uncertainty"><h3>What is uncertain</h3><ul className="plain">{s.section.uncertainty.filter((u) => !isStandingLimitationText(u)).map((u, i) => <li key={i}>{u}</li>)}</ul></section>
           )}
           {s.section.learn && s.section.learn.length > 0 && (
-            <section className="step-section"><h3>What you can learn here</h3>
+            <section className="step-section" data-narr="learn"><h3>What you can learn here</h3>
               <div className="concepts">{s.section.learn.map((c) => <div key={c.concept} className="concept"><b>📘 {c.concept}</b><span>{c.explanation}</span></div>)}</div>
               <p className="faint small">General knowledge the page draws on, not claims about this project.</p>
             </section>
@@ -247,6 +251,12 @@ function WikiPage({ projectId, pageKey, onEvent, onEpisode, onFile, onWritten }:
       )}
     </div>
   );
+}
+
+/** Listen button for a page; the narration is rebuilt only when the page's content changes. */
+function WikiListen({ content, numbered }: { content: SectionContent; numbered: boolean }) {
+  const segments = useMemo(() => narrateWiki(content, numbered), [content, numbered]);
+  return <Presenter segments={segments} />;
 }
 
 /** Downloads the whole guide: Markdown to keep or edit, or one HTML page to share. Both are current versions with your edits. */

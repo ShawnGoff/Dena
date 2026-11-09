@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Badge, Loading } from "../components/Bits";
+import { Presenter } from "../components/Presenter";
+import { narrateCode } from "../narrate";
 import { BusyBar, ModelChoice } from "../components/BusyBar";
 import { ModelSettings, useSettingsChanged } from "../components/ModelSettings";
 import { BudgetChoice } from "../components/BudgetChoice";
@@ -158,7 +160,8 @@ function FilePage({ projectId, file, onFile, onEvent, onChanged, known }: { proj
     <div className="page" style={{ maxWidth: 900 }}>
       {busy && <BusyBar what={`Explaining ${p.pending.symbols} ${p.pending.symbols === 1 ? "symbol" : "symbols"}${p.pending.fileDoc ? " and the file page" : ""}`} onStop={stop} stopping={stopping} />}
       {err && <div className={err.startsWith("Stopped") ? "notice" : "error"}>{err}</div>}
-      <h2 className="step-title mono" style={{ fontSize: 20 }}>{p.file.path}</h2>
+      <CodeListen p={p} />
+      <h2 className="step-title mono" style={{ fontSize: 20 }} data-narr="title">{p.file.path}</h2>
       <p className="faint small" style={{ marginTop: -6 }}>{p.file.language} · {p.lines} lines · {p.symbols.length} parts</p>
 
       {p.pending.calls > 0 && (
@@ -184,8 +187,8 @@ function FilePage({ projectId, file, onFile, onEvent, onChanged, known }: { proj
       {p.fileDoc && (
         <>
           {!p.fileDoc.current && <div className="notice" style={{ marginBottom: 12 }}>This overview was written for an earlier version of the file.</div>}
-          <p className="step-summary">{p.fileDoc.doc.purpose}</p>
-          <section className="step-section">
+          <p className="step-summary" data-narr="purpose">{p.fileDoc.doc.purpose}</p>
+          <section className="step-section" data-narr="fits">
             <h3>How it fits in</h3>
             <ul className="plain">{p.fileDoc.doc.fitsIn.map((x, i) => <li key={i}>{x}</li>)}</ul>
             <div className="code-links">
@@ -195,7 +198,7 @@ function FilePage({ projectId, file, onFile, onEvent, onChanged, known }: { proj
             </div>
           </section>
           {p.fileDoc.doc.learn.length > 0 && (
-            <section className="step-section">
+            <section className="step-section" data-narr="learn">
               <h3>What you can learn here</h3>
               <div className="concepts">{p.fileDoc.doc.learn.map((c) => <div key={c.concept} className="concept"><b>{c.concept}</b><span>{c.explanation}</span></div>)}</div>
               <p className="faint small">General programming knowledge, not claims about this project.</p>
@@ -210,7 +213,7 @@ function FilePage({ projectId, file, onFile, onEvent, onChanged, known }: { proj
         </>
       )}
 
-      <section className="step-section">
+      <section className="step-section" data-narr="inside">
         <h3>Inside the file</h3>
         {p.symbols.map((s) => <SymbolCard key={s.key} s={s} lines={lines} onEvent={onEvent} />)}
       </section>
@@ -252,10 +255,16 @@ function FilePage({ projectId, file, onFile, onEvent, onChanged, known }: { proj
   );
 }
 
+/** Listen button for a file page; the narration is rebuilt only when the page changes. */
+function CodeListen({ p }: { p: Page }) {
+  const segments = useMemo(() => narrateCode({ path: p.file.path, fileDoc: p.fileDoc?.doc ?? null, symbols: p.symbols }), [p.file.path, p.fileDoc, p.symbols]);
+  return <Presenter segments={segments} />;
+}
+
 function SymbolCard({ s, lines, onEvent }: { s: Sym; lines: string[]; onEvent: (id: number) => void }) {
   const [open, setOpen] = useState(false);
   return (
-    <article id={symId(s.key)} className={`sym ${s.status}`}>
+    <article id={symId(s.key)} className={`sym ${s.status}`} data-narr={`sym:${s.key}`}>
       <header className="sym-head">
         <span className="mono sym-name">{s.key}</span>
         <Badge>{KIND_LABEL[s.kind] ?? s.kind}</Badge>

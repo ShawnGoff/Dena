@@ -88,7 +88,20 @@ evidence and the statements that cite changed evidence, and shows the result as 
 what was added, changed and removed. Nothing is applied until you choose. Your own edits are never
 overwritten, and every version stays in the history.
 
-## 7. Calling the model
+## 7. Listening
+
+The **Listen** button turns a page into spoken text without a model: it reads the title and summary,
+then each section in order, saying "Dena infers that…" or "The AI said that…" for statements that
+were not directly observed, numbering instructions, and pointing at code on screen instead of
+reading it. Long text is split at sentence ends. The part being read is highlighted.
+
+By default the browser's own voices speak. The optional **natural voice** is Kokoro, a small
+speech model Dena's server runs in a child process on your computer (`packages/server/src/voice.ts`).
+It is installed into `~/.dena/voice` only after you agree, speaks one short piece at a time while
+the page prepares the next, and is stopped when idle. The page's policy allows playing the audio
+the page itself fetched (`media-src blob:`) and nothing more.
+
+## 8. Calling the model
 
 Dena writes through your own Claude Code, with tools turned off so the model can only read what it
 is given. Answers come back in one turn as JSON that Dena checks itself; if an answer does not fit,

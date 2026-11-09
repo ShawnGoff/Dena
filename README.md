@@ -29,6 +29,9 @@ Dena labels it so you can check, and never invents history it did not capture.
   captured.
 - **Keeping it current**: when new work arrives, Dena keeps every statement whose evidence did not
   change, rewrites only the rest, and shows you what it added, changed and removed before applying it.
+- **Listen**: a 🔊 button on every step, wiki page and code page reads it aloud and follows along.
+  It uses your computer's voices by default, and can use an optional natural voice that runs
+  locally (see below).
 - **Export**: the whole guide as Markdown, or as a single HTML page you can share.
 
 ## Requirements
@@ -170,6 +173,10 @@ code file of a few hundred lines about 8k.
   recorded only as "a sensitive file changed".
 - When Dena writes, it sends the redacted evidence for that one step or page to Claude through your
   own Claude Code, with tools turned off: the model cannot read files or run anything.
+- Listening uses your browser's voices and sends nothing anywhere. The optional natural voice is
+  downloaded only after you agree (about 330 MB: the speech runtime from npm and the model from
+  Hugging Face, kept in `~/.dena/voice`). Text is spoken on your computer; only the download uses
+  the network. Remove it from the player, or delete that folder.
 - Exports contain your project's history. Read one before you share it.
 
 ## What Dena can and can't see

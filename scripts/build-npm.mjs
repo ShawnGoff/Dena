@@ -35,6 +35,9 @@ await build({
 fs.cpSync(rel("apps", "web", "dist"), path.join(out, "apps", "web", "dist"), { recursive: true });
 fs.mkdirSync(path.join(out, "packages", "hook"), { recursive: true });
 fs.copyFileSync(rel("packages", "hook", "dena-hook.mjs"), path.join(out, "packages", "hook", "dena-hook.mjs"));
+// The natural voice runs in a child process from this plain-JS file (its runtime installs on demand into ~/.dena/voice).
+fs.mkdirSync(path.join(out, "packages", "server", "src"), { recursive: true });
+fs.copyFileSync(rel("packages", "server", "src", "voice-worker.mjs"), path.join(out, "packages", "server", "src", "voice-worker.mjs"));
 
 // 4. The command: a thin launcher around the bundle (the repo's bin uses tsx, which is not shipped).
 const binDir = path.join(out, "packages", "cli", "bin");

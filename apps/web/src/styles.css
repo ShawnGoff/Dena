@@ -431,3 +431,14 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .browser-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; border: 0; background: transparent; color: var(--text); text-align: left; padding: 6px 8px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 13.5px; }
 .browser-row:hover { background: var(--bg-hover); }
 .browser .badge { font-size: 10.5px; }
+
+/* Presenter: reads a page aloud and follows along. */
+.presenter { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
+.presenter:not(.idle) { position: sticky; top: 0; z-index: 5; background: var(--bg-raised); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 8px 10px; }
+.presenter-spacer { flex: 1; }
+.presenter select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+.narrating { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 6px; background: var(--accent-soft); }
+.progress { height: 8px; border-radius: 4px; background: var(--bg-sunken); border: 1px solid var(--line); overflow: hidden; margin: 8px 0; }
+.progress > span { display: block; height: 100%; background: var(--accent); transition: width 0.4s; }
+.progress > span.indeterminate { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }

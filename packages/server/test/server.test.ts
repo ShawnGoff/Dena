@@ -106,6 +106,8 @@ describe("local server security", () => {
     const r = await req("/", { token: null });
     expect(r.status).toBe(200);
     expect(r.headers["content-security-policy"]).toContain("default-src 'self'");
+    // The natural voice plays audio the page fetched itself (a blob: URL); nothing else is opened up.
+    expect(r.headers["content-security-policy"]).toContain("media-src 'self' blob:");
     expect(r.headers["referrer-policy"]).toBe("no-referrer");
   });
 });

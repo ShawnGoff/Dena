@@ -4,6 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { pluginInstalled, requiredDone, setupSteps } from "./setup.ts";
+import { createVoiceManager, VoiceError, type VoiceBackend } from "./voice.ts";
 import { denaRoot, correlate, authorSummary, displaySummary, effectiveTest, likelyAuthors, type LikelyAuthor, type StoredEvent, type Store } from "@dena/core";
 import { foldersUsedWithClaude, git, hookInstall, importChangedTranscripts, importGitIfChanged, isWorkFolder, lastHeartbeat, liveRecorder, pausedWindows, Recorder, type RecorderOptions } from "@dena/adapters";
 import { explainMany, stepCoverage, exportGuideHtml, tutorialPlan, writeTutorial, episodeChapters, howBuiltPage, howBuiltStep, adoptUpdate, planUpdate, updateSection, updateStep, explainFolder, folderPlan, inFolder, codeOverview, codePage, explainFile, renderCodeMarkdown, buildActivityLog, DEFAULT_KINDS, renderActivityMarkdown, type ActivityKind, packetMatches, standingLimitations, cancelQueued, enqueue, findOutdated, listJobs, processDueJobs, recoverJobs,
@@ -31,6 +32,8 @@ export interface ServerOptions {
   provider?: Provider;
   /** Options for recorders this server starts (e.g. where to find Claude Code transcripts). */
   recorder?: Omit<RecorderOptions, "log">;
+  /** The optional natural voice; defaults to one installed under the Dena home folder. Injectable for tests. */
+  voice?: VoiceBackend;
 }
 
 /** Model names reach a command line, so only plain names and aliases are accepted ("haiku", "claude-sonnet-5-5"). */
@@ -74,6 +77,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
   const token = opts.token ?? randomBytes(24).toString("base64url");
   const webDir = opts.webDir ?? DEFAULT_WEB_DIR;
   const recorders = new Map<string, Recorder>();
+  const voice = opts.voice ?? createVoiceManager({ dir: path.join(store.home, "voice"), log: (m) => opts.log?.(m) });
   /** Generations in progress, each with the control that stops it (the Stop button). */
   const inFlight = new Map<string, AbortController>();
   /** How far a whole-folder code explanation has got, for the page to show while it runs. */
@@ -196,6 +200,16 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
     // /api/projects
     if (parts.length === 1 && parts[0] === "projects" && method === "GET")
       return store.listProjects().map((p) => ({ ...p, ...recorderState(p.id), stats: store.stats(p.id), folder: store.projectSettings(p.id).folder ?? null }));
+
+    // The optional natural voice (installed only when the owner agrees). Speaking is handled in the request loop (binary reply).
+    if (parts[0] === "voice") {
+      if (parts.length === 1 && method === "GET") return voice.status();
+      if (parts.length === 2 && method === "POST") {
+        if (parts[1] === "install") { voice.install(); return voice.status(); }
+        if (parts[1] === "cancel") { voice.cancel(); return voice.status(); }
+        if (parts[1] === "remove") { await voice.remove(); return voice.status(); }
+      }
+    }
 
     // The first-run checklist. Read-only.
     if (parts.length === 1 && parts[0] === "setup" && method === "GET") {
@@ -821,7 +835,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       "cache-control": path.basename(file) === "index.html" ? "no-cache" : "public, max-age=31536000, immutable",
       "x-content-type-options": "nosniff",
       "referrer-policy": "no-referrer", // the token in the URL must not leak to other sites
-      "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
+      "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'",
     });
     fs.createReadStream(file).pipe(res);
     void req;
@@ -849,6 +863,16 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         body = raw ? JSON.parse(raw) : null;
       }
       const parts = url.pathname.slice("/api/".length).split("/").filter(Boolean);
+      if (req.method === "POST" && parts.length === 2 && parts[0] === "voice" && parts[1] === "speak") {
+        try {
+          const wav = await voice.speak(String(body?.text ?? ""), { voice: typeof body?.voice === "string" ? body.voice : undefined, speed: Number(body?.speed) || 1 });
+          res.writeHead(200, { "content-type": "audio/wav", "content-length": wav.length, "cache-control": "no-store", "x-content-type-options": "nosniff" });
+          return void res.end(wav);
+        } catch (e) {
+          if (e instanceof VoiceError) throw new HttpError(e.status, e.message);
+          throw e;
+        }
+      }
       send(200, await api(req.method ?? "GET", parts, url, body));
     } catch (err) {
       const status = err instanceof HttpError ? err.status : 500;
@@ -875,6 +899,7 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         recorders.delete(id);
         await r.stop();
       }
+      voice.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };

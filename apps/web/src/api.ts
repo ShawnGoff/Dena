@@ -45,6 +45,14 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   return data as T;
 }
 
+/** POST that answers with a file (the natural voice's audio) instead of JSON. */
+export async function apiBlob(path: string, body: unknown): Promise<Blob> {
+  const res = await fetch(`/api/${path}`, { method: "POST", headers: { "x-dena-token": token ?? "", "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (res.status === 401) throw new Error(STALE_KEY);
+  if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
+  return res.blob();
+}
+
 export interface Project {
   id: string;
   name: string;

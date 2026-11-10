@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Presenter } from "../src/components/Presenter";
+import { forgetPortrait } from "../src/portrait";
 
 /** Fakes for the speech engine, the audio element and the server's /api/voice calls. */
 class FakeUtterance { onend: (() => void) | null = null; onerror: (() => void) | null = null; constructor(public text: string) {} }
@@ -20,12 +21,16 @@ let current: any;
 let speakBodies: any[];
 let posts: string[];
 let speakFails: boolean;
+let hasPortrait: boolean;
 
 beforeEach(() => {
+  forgetPortrait();
+  HTMLCanvasElement.prototype.getContext = (() => null) as any; // jsdom cannot draw
   FakeAudio.all = [];
   speakBodies = [];
   posts = [];
   speakFails = false;
+  hasPortrait = true;
   current = status();
   (window as any).speechSynthesis = { speak: vi.fn(), cancel: vi.fn(), pause: vi.fn(), resume: vi.fn(), getVoices: () => [], addEventListener: vi.fn(), removeEventListener: vi.fn() };
   (window as any).SpeechSynthesisUtterance = FakeUtterance;
@@ -43,6 +48,7 @@ beforeEach(() => {
     if (u === "/api/voice/install") { posts.push("install"); current = status({ state: "installing", step: "Downloading the voice model", percent: 40 }); return json(current); }
     if (u === "/api/voice/remove") { posts.push("remove"); current = status({ state: "off", sizeBytes: null }); return json(current); }
     if (u === "/api/voice") return json(current);
+    if (u === "/api/presenter/portrait") return hasPortrait ? { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(8) } : { ok: false, status: 404, json: async () => ({}) };
     throw new Error(`unexpected ${u}`);
   }) as any;
   localStorage.clear();
@@ -65,7 +71,7 @@ describe("Presenter with the natural voice", () => {
     localStorage.setItem("dena.presenter.engine", "natural");
     await listen();
     await waitFor(() => expect(FakeAudio.all[0]?.played.length).toBe(1));
-    expect(speakBodies.map((b) => b.text)).toEqual(["Title.", "First."]); // the next is already being prepared
+    expect(speakBodies.map((b) => b.text)).toEqual(["Title.", "First.", "Second."]); // the next two are already being prepared
     expect((window as any).speechSynthesis.speak).not.toHaveBeenCalled();
     await act(async () => { FakeAudio.all[0]!.onended!(); });
     await waitFor(() => expect(FakeAudio.all[0]!.played.length).toBe(2));
@@ -127,23 +133,30 @@ describe("Asking before downloading", () => {
 });
 
 describe("Show presenter", () => {
-  it("is off until chosen, and the choice is remembered", async () => {
+  it("is offered only when the owner has added a picture, is off until chosen, and the choice is remembered", async () => {
     localStorage.setItem("dena.presenter.engine", "natural");
     await listen();
     await waitFor(() => expect(FakeAudio.all[0]?.played.length).toBe(1));
-    const box = screen.getByLabelText("Show presenter") as HTMLInputElement;
+    const box = (await screen.findByLabelText("Show presenter")) as HTMLInputElement;
     expect(box.checked).toBe(false);
     expect(document.querySelector(".avatar")).toBeNull();
     fireEvent.click(box);
     expect(localStorage.getItem("dena.presenter.avatar")).toBe("on");
   });
+
+  it("does not offer the presenter when there is no picture", async () => {
+    hasPortrait = false;
+    localStorage.setItem("dena.presenter.engine", "natural");
+    await listen();
+    await waitFor(() => expect(FakeAudio.all[0]?.played.length).toBe(1));
+    expect(screen.queryByLabelText("Show presenter")).toBeNull();
+  });
 });
 
-describe("Avatar without a model", () => {
-  it("asks for the owner's bust and carries on quietly when there is none", async () => {
+describe("Avatar", () => {
+  it("draws nothing and does not break where canvas drawing is unavailable", async () => {
     const { Avatar } = await import("../src/components/Avatar");
-    const loadModel = vi.fn(async () => null);
-    render(<Avatar speaking={false} getLevel={() => null} loadModel={loadModel} />);
-    await waitFor(() => expect(loadModel).toHaveBeenCalled());
+    const { container } = render(<Avatar picture={new ArrayBuffer(8)} speaking={false} getLevel={() => null} />);
+    expect(container.querySelector("canvas")).toBeTruthy();
   });
 });

@@ -5,6 +5,8 @@ import { naturalClip, useNaturalVoice, type NaturalStatus } from "../natural";
 import { NaturalVoiceDialog } from "./NaturalVoiceDialog";
 import { Avatar } from "./Avatar";
 import { rms } from "../avatarMath";
+import { usePortrait } from "../portrait";
+import { clearWord, mapWords, markWord, weights, wordAt, wordAtChar, wordsOf } from "../highlight";
 
 const RATES = [0.85, 1, 1.25, 1.5];
 type Engine = "browser" | "natural";
@@ -65,6 +67,8 @@ export function usePresenter(segments: Segment[], natural: NaturalStatus | null)
   const clips = useRef(new Map<number, Promise<string>>());
   const best = useRef<SpeechSynthesisVoice | undefined>(undefined);
   const analyser = useRef<AnalyserNode | null>(null);
+  const raf = useRef(0);
+  const spoken = useRef<{ ranges: (Range | null)[]; words: ReturnType<typeof wordsOf>; weights: number[]; shown: number } | null>(null);
   best.current = chosen.best;
   segs.current = segments;
   // The natural voice only counts once the server says it is installed.
@@ -87,6 +91,8 @@ export function usePresenter(segments: Segment[], natural: NaturalStatus | null)
 
   const halt = useCallback(() => {
     token.current++;
+    cancelAnimationFrame(raf.current);
+    clearWord();
     if (supported()) window.speechSynthesis.cancel();
     const a = audio.current;
     if (a) {
@@ -129,6 +135,16 @@ export function usePresenter(segments: Segment[], natural: NaturalStatus | null)
     setIndex(i);
     setPaused(false);
     setProblem(null);
+    cancelAnimationFrame(raf.current);
+    clearWord();
+    const target = document.querySelector<HTMLElement>(`[data-narr="${seg.anchor.replace(/["\\]/g, "\\$&")}"]`);
+    spoken.current = { ranges: target ? mapWords(target, seg.text) : [], words: wordsOf(seg.text), weights: weights(seg.text), shown: -1 };
+    const show = (w: number) => {
+      const s = spoken.current;
+      if (!s || w === s.shown) return;
+      s.shown = w;
+      markWord(s.ranges[w] ?? null);
+    };
 
     if (opts.current.useNatural) {
       setLoading(true);
@@ -151,7 +167,17 @@ export function usePresenter(segments: Segment[], natural: NaturalStatus | null)
         a.src = url;
         a.playbackRate = opts.current.rate;
         void a.play().catch(() => {});
-        void clip(i + 1)?.catch(() => {}); // prepare the next piece while this one plays
+        void clip(i + 1)?.catch(() => {}); // prepare the next pieces while this one plays
+        void clip(i + 2)?.catch(() => {});
+        // The voice gives no word timings, so estimate them from how far through the clip it is.
+        const follow = () => {
+          if (token.current !== t) return;
+          const d = a.duration;
+          const s = spoken.current;
+          if (s && d > 0 && Number.isFinite(d)) show(wordAt(s.weights, a.currentTime / d));
+          raf.current = requestAnimationFrame(follow);
+        };
+        follow();
       }, (e: Error) => {
         if (token.current !== t) return;
         setProblem(`The natural voice stopped: ${e.message}`);
@@ -169,6 +195,10 @@ export function usePresenter(segments: Segment[], natural: NaturalStatus | null)
       u.voice = v;
       u.lang = v.lang;
     }
+    u.onboundary = (e) => {
+      const s = spoken.current;
+      if (token.current === t && s) show(wordAtChar(s.words, e.charIndex));
+    };
     u.onend = () => {
       if (token.current === t) speak(i + 1);
     };
@@ -285,6 +315,7 @@ export function usePresenter(segments: Segment[], natural: NaturalStatus | null)
 export function Presenter({ segments, label = "Listen" }: { segments: Segment[]; label?: string }) {
   const nv = useNaturalVoice();
   const p = usePresenter(segments, nv.status);
+  const picture = usePortrait();
   const [dialog, setDialog] = useState(false);
   const [face, setFace] = useState(() => read("dena.presenter.avatar") === "on");
   const active = p.index >= 0;
@@ -329,7 +360,7 @@ export function Presenter({ segments, label = "Listen" }: { segments: Segment[];
       <button className="btn" onClick={p.stop} aria-label="Stop">⏹ Stop</button>
       <span className="faint small">Part {part} of {parts}{p.loading ? " · preparing…" : ""}</span>
       <span className="presenter-spacer" />
-      <label className="small faint"><input type="checkbox" checked={face} aria-label="Show presenter" onChange={(e) => { setFace(e.target.checked); write("dena.presenter.avatar", e.target.checked ? "on" : "off"); }} /> Show presenter</label>
+      {picture && <label className="small faint"><input type="checkbox" checked={face} aria-label="Show presenter" onChange={(e) => { setFace(e.target.checked); write("dena.presenter.avatar", e.target.checked ? "on" : "off"); }} /> Show presenter</label>}
       <label className="small faint">Speed{" "}
         <select value={p.rate} onChange={(e) => p.setRate(Number(e.target.value))} aria-label="Speed">
           {RATES.map((r) => <option key={r} value={r}>{r}×</option>)}
@@ -363,7 +394,7 @@ export function Presenter({ segments, label = "Listen" }: { segments: Segment[];
         </span>
       )}
       {p.problem && <span className="error small" style={{ flexBasis: "100%" }}>{p.problem}</span>}
-      {face && <Avatar speaking={!p.paused && !p.loading} getLevel={p.getLevel} />}
+      {face && picture && <Avatar picture={picture} speaking={!p.paused && !p.loading} getLevel={p.getLevel} />}
       {dlg}
     </div>
   );

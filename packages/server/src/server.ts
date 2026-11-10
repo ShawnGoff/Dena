@@ -873,12 +873,12 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
           throw e;
         }
       }
-      // The optional 3D presenter model: a file the owner put in their own Dena folder. Never bundled.
-      if (req.method === "GET" && parts.length === 2 && parts[0] === "presenter" && parts[1] === "bust") {
-        const file = path.join(store.home, "presenter", "bust.glb");
+      // The optional presenter picture: a file the owner put in their own Dena folder. Never bundled.
+      if (req.method === "GET" && parts.length === 2 && parts[0] === "presenter" && parts[1] === "portrait") {
+        const file = path.join(store.home, "presenter", "portrait.png");
         const st = fs.statSync(file, { throwIfNoEntry: false });
-        if (!st?.isFile()) throw new HttpError(404, "No presenter model");
-        res.writeHead(200, { "content-type": "model/gltf-binary", "content-length": st.size, "cache-control": "no-store", "x-content-type-options": "nosniff" });
+        if (!st?.isFile()) throw new HttpError(404, "No presenter picture");
+        res.writeHead(200, { "content-type": "image/png", "content-length": st.size, "cache-control": "no-store", "x-content-type-options": "nosniff" });
         return void fs.createReadStream(file).pipe(res);
       }
       send(200, await api(req.method ?? "GET", parts, url, body));

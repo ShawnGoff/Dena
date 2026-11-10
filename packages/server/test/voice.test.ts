@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Store } from "@dena/core";
 import { startServer, type RunningServer } from "../src/server.ts";
-import { createVoiceManager, pruneOtherPlatforms, VoiceError, type VoiceBackend, type VoiceStatus } from "../src/voice.ts";
+import { createVoiceManager, pruneOtherPlatforms, trimWav, VoiceError, type VoiceBackend, type VoiceStatus } from "../src/voice.ts";
 
 const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
@@ -160,14 +160,14 @@ describe("voice routes", () => {
   });
 });
 
-describe("presenter model route", () => {
-  it("needs the token, says 404 when there is no model, and serves the owner's file when there is", async () => {
-    const home = tmp("dena-bust-");
+describe("presenter picture route", () => {
+  it("needs the token, says 404 when there is no model, and serves the owner's picture when there is", async () => {
+    const home = tmp("dena-portrait-");
     const web = tmp("dena-bweb-");
     fs.writeFileSync(path.join(web, "index.html"), "<!doctype html>");
     const srv = await startServer(new Store(home), { port: 0, webDir: web, voice: new FakeVoice() });
     const get = (token: string | null) => new Promise<{ status: number; type: string; body: string }>((resolve, reject) => {
-      http.get({ host: "127.0.0.1", port: srv.port, path: "/api/presenter/bust", headers: { host: `127.0.0.1:${srv.port}`, ...(token ? { "x-dena-token": token } : {}) } }, (r) => {
+      http.get({ host: "127.0.0.1", port: srv.port, path: "/api/presenter/portrait", headers: { host: `127.0.0.1:${srv.port}`, ...(token ? { "x-dena-token": token } : {}) } }, (r) => {
         const c: Buffer[] = [];
         r.on("data", (d) => c.push(d));
         r.on("end", () => resolve({ status: r.statusCode!, type: String(r.headers["content-type"]), body: Buffer.concat(c).toString() }));
@@ -176,11 +176,38 @@ describe("presenter model route", () => {
     expect((await get(null)).status).toBe(401);
     expect((await get(srv.token)).status).toBe(404);
     fs.mkdirSync(path.join(home, "presenter"), { recursive: true });
-    fs.writeFileSync(path.join(home, "presenter", "bust.glb"), "glTF-bytes");
+    fs.writeFileSync(path.join(home, "presenter", "portrait.png"), "png-bytes");
     const ok = await get(srv.token);
     expect(ok.status).toBe(200);
-    expect(ok.type).toBe("model/gltf-binary");
-    expect(ok.body).toBe("glTF-bytes");
+    expect(ok.type).toBe("image/png");
+    expect(ok.body).toBe("png-bytes");
     await srv.close();
+  });
+});
+
+describe("trimWav", () => {
+  /** A float WAV: `quiet` silent frames, `loud` loud ones, `quiet` more. */
+  const wav = (quiet: number, loud: number) => {
+    const n = quiet * 2 + loud;
+    const head = Buffer.alloc(44);
+    head.write("RIFF", 0); head.writeUInt32LE(36 + n * 4, 4); head.write("WAVE", 8); head.write("fmt ", 12);
+    head.writeUInt32LE(16, 16); head.writeUInt16LE(3, 20); head.writeUInt16LE(1, 22); head.writeUInt32LE(24000, 24);
+    head.writeUInt32LE(96000, 28); head.writeUInt16LE(4, 32); head.writeUInt16LE(32, 34); head.write("data", 36); head.writeUInt32LE(n * 4, 40);
+    const body = Buffer.alloc(n * 4);
+    for (let i = 0; i < loud; i++) body.writeFloatLE(0.5, (quiet + i) * 4);
+    return Buffer.concat([head, body]);
+  };
+  it("cuts long silences at both ends, keeps a margin, and keeps the header consistent", () => {
+    const out = trimWav(wav(12000, 24000)); // 0.5 s quiet, 1 s speech, 0.5 s quiet
+    const frames = (out.length - 44) / 4;
+    expect(frames).toBe(720 + 24000 + 2160); // 30 ms lead + speech + 90 ms tail
+    expect(out.readUInt32LE(40)).toBe(frames * 4);
+    expect(out.readUInt32LE(4)).toBe(out.length - 8);
+  });
+  it("leaves all-quiet and unknown audio alone", () => {
+    const quiet = wav(1000, 0);
+    expect(trimWav(quiet)).toBe(quiet);
+    const junk = Buffer.from("not a wav file at all");
+    expect(trimWav(junk)).toBe(junk);
   });
 });

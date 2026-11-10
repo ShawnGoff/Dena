@@ -18,11 +18,11 @@ export function mouthOpen(level: number): number {
 
 /** Smooth toward a target; fast to open, slower to close, which reads as speech rather than flapping. */
 export function follow(current: number, target: number): number {
-  return current + (target - current) * (target > current ? 0.55 : 0.25);
+  return current + (target - current) * (target > current ? 0.28 : 0.1);
 }
 
 /** A stand-in mouth movement for voices whose audio the page cannot hear (the browser's own). */
 export function pretendLevel(timeMs: number): number {
   const t = timeMs / 1000;
-  return 0.03 + 0.07 * Math.abs(Math.sin(t * 9.1)) * (0.6 + 0.4 * Math.sin(t * 3.3 + 1));
+  return 0.03 + 0.07 * Math.abs(Math.sin(t * 5.2)) * (0.6 + 0.4 * Math.sin(t * 2.1 + 1));
 }

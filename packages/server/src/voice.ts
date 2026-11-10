@@ -90,6 +90,58 @@ export function pruneOtherPlatforms(dir: string, platform = process.platform, ar
   }
 }
 
+/**
+ * Cuts the quiet at the start and end of a WAV (the voice leaves some each time), keeping a short
+ * margin so words are not clipped. Pieces then run into each other instead of leaving a pause.
+ * Handles the 32-bit float and 16-bit formats; anything else is returned as it came.
+ */
+export function trimWav(wav: Buffer, opts: { lead?: number; tail?: number; floor?: number } = {}): Buffer {
+  try {
+    if (wav.toString("ascii", 0, 4) !== "RIFF" || wav.toString("ascii", 8, 12) !== "WAVE") return wav;
+    let pos = 12;
+    let fmt: { tag: number; ch: number; rate: number; bits: number } | null = null;
+    while (pos + 8 <= wav.length) {
+      const id = wav.toString("ascii", pos, pos + 4);
+      const size = wav.readUInt32LE(pos + 4);
+      if (id === "fmt ") fmt = { tag: wav.readUInt16LE(pos + 8), ch: wav.readUInt16LE(pos + 10), rate: wav.readUInt32LE(pos + 12), bits: wav.readUInt16LE(pos + 22) };
+      if (id === "data" && fmt) {
+        const isFloat = fmt.tag === 3 && fmt.bits === 32;
+        const isInt = fmt.tag === 1 && fmt.bits === 16;
+        if (!isFloat && !isInt) return wav;
+        const bytes = fmt.bits / 8;
+        const frame = bytes * fmt.ch;
+        const start = pos + 8;
+        const end = Math.min(wav.length, start + size);
+        const frames = Math.floor((end - start) / frame);
+        const floor = opts.floor ?? 0.01;
+        const loud = (f: number) => {
+          const o = start + f * frame;
+          const v = isFloat ? wav.readFloatLE(o) : wav.readInt16LE(o) / 32768;
+          return Math.abs(v) > floor;
+        };
+        let first = 0;
+        while (first < frames && !loud(first)) first++;
+        if (first >= frames) return wav; // all quiet: leave it
+        let last = frames - 1;
+        while (last > first && !loud(last)) last--;
+        const lead = Math.round((opts.lead ?? 0.03) * fmt.rate);
+        const tail = Math.round((opts.tail ?? 0.09) * fmt.rate);
+        const from = Math.max(0, first - lead);
+        const to = Math.min(frames, last + 1 + tail);
+        const body = wav.subarray(start + from * frame, start + to * frame);
+        const head = Buffer.from(wav.subarray(0, start));
+        head.writeUInt32LE(body.length, pos + 4); // data size
+        head.writeUInt32LE(head.length - 8 + body.length, 4); // RIFF size
+        return Buffer.concat([head, body]);
+      }
+      pos += 8 + size + (size % 2);
+    }
+    return wav;
+  } catch {
+    return wav;
+  }
+}
+
 export interface VoiceOptions {
   dir: string;
   log?: (m: string) => void;
@@ -136,7 +188,7 @@ export function createVoiceManager(o: VoiceOptions): VoiceBackend {
       clearTimeout(p.timer);
       pending.delete(m.id);
       if (m.error) p.reject(new VoiceError(500, "The voice could not speak that"));
-      else p.resolve(Buffer.from(m.wav));
+      else p.resolve(trimWav(Buffer.from(m.wav)));
     });
     w.on("exit", () => {
       if (worker === w) stopWorker();

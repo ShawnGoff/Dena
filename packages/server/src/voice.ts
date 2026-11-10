@@ -17,7 +17,8 @@ export const KOKORO_VERSION = "1.2.1";
 /** Voices graded A or B by the model's authors, English only. */
 export const NATURAL_VOICES: Record<string, string> = {
   af_heart: "Heart (US, female)", af_bella: "Bella (US, female)", af_nicole: "Nicole (US, female)",
-  am_michael: "Michael (US, male)", bf_emma: "Emma (UK, female)", bm_george: "George (UK, male)",
+  bf_emma: "Emma (UK, female)",
+  // Hidden for now, still supported by the model: am_michael "Michael (US, male)", bm_george "George (UK, male)".
 };
 export const DEFAULT_NATURAL_VOICE = "af_heart";
 export const MAX_SPEAK_CHARS = 800;

@@ -345,7 +345,7 @@ export function Presenter({ segments, label = "Listen" }: { segments: Segment[];
       )}
       {p.useNatural && nv.status ? (
         <label className="small faint">Voice{" "}
-          <select value={p.naturalVoice} onChange={(e) => p.setNaturalVoice(e.target.value)} aria-label="Voice">
+          <select value={p.naturalVoice in nv.status.voices ? p.naturalVoice : Object.keys(nv.status.voices)[0]} onChange={(e) => p.setNaturalVoice(e.target.value)} aria-label="Voice">
             {Object.entries(nv.status.voices).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </select>
         </label>

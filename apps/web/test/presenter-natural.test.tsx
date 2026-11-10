@@ -125,3 +125,25 @@ describe("Asking before downloading", () => {
     await waitFor(() => expect(posts).toEqual(["remove"]));
   });
 });
+
+describe("Show presenter", () => {
+  it("is off until chosen, and the choice is remembered", async () => {
+    localStorage.setItem("dena.presenter.engine", "natural");
+    await listen();
+    await waitFor(() => expect(FakeAudio.all[0]?.played.length).toBe(1));
+    const box = screen.getByLabelText("Show presenter") as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(document.querySelector(".avatar")).toBeNull();
+    fireEvent.click(box);
+    expect(localStorage.getItem("dena.presenter.avatar")).toBe("on");
+  });
+});
+
+describe("Avatar without a model", () => {
+  it("asks for the owner's bust and carries on quietly when there is none", async () => {
+    const { Avatar } = await import("../src/components/Avatar");
+    const loadModel = vi.fn(async () => null);
+    render(<Avatar speaking={false} getLevel={() => null} loadModel={loadModel} />);
+    await waitFor(() => expect(loadModel).toHaveBeenCalled());
+  });
+});

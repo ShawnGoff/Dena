@@ -442,3 +442,6 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .progress > span { display: block; height: 100%; background: var(--accent); transition: width 0.4s; }
 .progress > span.indeterminate { animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.35; } }
+/* The 3D presenter floats in the corner so the page and the player keep their layout. */
+.avatar { position: fixed; right: 16px; bottom: 16px; width: 180px; height: 220px; z-index: 6; pointer-events: none; background: var(--bg-raised); border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+.avatar canvas { display: block; }

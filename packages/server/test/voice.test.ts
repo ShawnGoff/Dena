@@ -159,3 +159,28 @@ describe("voice routes", () => {
     expect(ok.body.toString()).toBe("WAV:bf_emma:1.5:Hello there.");
   });
 });
+
+describe("presenter model route", () => {
+  it("needs the token, says 404 when there is no model, and serves the owner's file when there is", async () => {
+    const home = tmp("dena-bust-");
+    const web = tmp("dena-bweb-");
+    fs.writeFileSync(path.join(web, "index.html"), "<!doctype html>");
+    const srv = await startServer(new Store(home), { port: 0, webDir: web, voice: new FakeVoice() });
+    const get = (token: string | null) => new Promise<{ status: number; type: string; body: string }>((resolve, reject) => {
+      http.get({ host: "127.0.0.1", port: srv.port, path: "/api/presenter/bust", headers: { host: `127.0.0.1:${srv.port}`, ...(token ? { "x-dena-token": token } : {}) } }, (r) => {
+        const c: Buffer[] = [];
+        r.on("data", (d) => c.push(d));
+        r.on("end", () => resolve({ status: r.statusCode!, type: String(r.headers["content-type"]), body: Buffer.concat(c).toString() }));
+      }).on("error", reject);
+    });
+    expect((await get(null)).status).toBe(401);
+    expect((await get(srv.token)).status).toBe(404);
+    fs.mkdirSync(path.join(home, "presenter"), { recursive: true });
+    fs.writeFileSync(path.join(home, "presenter", "bust.glb"), "glTF-bytes");
+    const ok = await get(srv.token);
+    expect(ok.status).toBe(200);
+    expect(ok.type).toBe("model/gltf-binary");
+    expect(ok.body).toBe("glTF-bytes");
+    await srv.close();
+  });
+});

@@ -53,6 +53,13 @@ export async function apiBlob(path: string, body: unknown): Promise<Blob> {
   return res.blob();
 }
 
+/** GET that answers with a file (the optional 3D presenter model). Null when there is none. */
+export async function apiBuffer(path: string): Promise<ArrayBuffer | null> {
+  const res = await fetch(`/api/${path}`, { headers: { "x-dena-token": token ?? "" } });
+  if (res.status === 401) throw new Error(STALE_KEY);
+  return res.ok ? res.arrayBuffer() : null;
+}
+
 export interface Project {
   id: string;
   name: string;

@@ -3,6 +3,8 @@ import type { Segment } from "../narrate";
 import { chooseVoices } from "../voices";
 import { naturalClip, useNaturalVoice, type NaturalStatus } from "../natural";
 import { NaturalVoiceDialog } from "./NaturalVoiceDialog";
+import { Avatar } from "./Avatar";
+import { rms } from "../avatarMath";
 
 const RATES = [0.85, 1, 1.25, 1.5];
 type Engine = "browser" | "natural";
@@ -23,6 +25,22 @@ const write = (k: string, v: string) => {
 };
 
 const supported = () => typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+
+/** Routes an audio element through an analyser so the avatar can follow the voice. Null if the browser won't. */
+function listenTo(a: HTMLAudioElement): AnalyserNode | null {
+  try {
+    const Ctx = window.AudioContext ?? (window as any).webkitAudioContext;
+    if (!Ctx) return null;
+    const ctx = new Ctx();
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    ctx.createMediaElementSource(a).connect(an);
+    an.connect(ctx.destination);
+    return an;
+  } catch {
+    return null; // the voice still plays, the mouth just moves on a pattern
+  }
+}
 
 /**
  * Reads segments aloud, with the browser's own voices or (when installed and chosen) the natural
@@ -46,6 +64,7 @@ export function usePresenter(segments: Segment[], natural: NaturalStatus | null)
   const audio = useRef<HTMLAudioElement | null>(null);
   const clips = useRef(new Map<number, Promise<string>>());
   const best = useRef<SpeechSynthesisVoice | undefined>(undefined);
+  const analyser = useRef<AnalyserNode | null>(null);
   best.current = chosen.best;
   segs.current = segments;
   // The natural voice only counts once the server says it is installed.
@@ -118,6 +137,8 @@ export function usePresenter(segments: Segment[], natural: NaturalStatus | null)
         if (token.current !== t) return;
         setLoading(false);
         const a = (audio.current ??= new Audio());
+        if (!analyser.current) analyser.current = listenTo(a);
+        void (analyser.current?.context as AudioContext | undefined)?.resume().catch(() => {});
         a.onerror = () => token.current === t && (setProblem("The natural voice could not play that."), stop());
         a.onended = () => {
           if (token.current !== t) return;
@@ -178,6 +199,15 @@ export function usePresenter(segments: Segment[], natural: NaturalStatus | null)
     while (p > 0 && all[p - 1]!.anchor === prev) p--;
     speak(p);
   }, [index, speak, stop]);
+
+  /** How loud the voice is right now (0-1), or null when the page cannot hear it (the browser's own voices). */
+  const getLevel = useCallback((): number | null => {
+    const an = analyser.current;
+    if (!an || !opts.current.useNatural) return null;
+    const buf = new Uint8Array(an.fftSize);
+    an.getByteTimeDomainData(buf);
+    return rms(buf);
+  }, []);
 
   const toggle = useCallback(() => {
     if (index < 0) return speak(0);
@@ -244,7 +274,7 @@ export function usePresenter(segments: Segment[], natural: NaturalStatus | null)
 
   return {
     supported: supported(), index, paused, loading, problem, rate, setRate, voices: chosen.list, hasPremium: chosen.hasPremium, voiceURI, setVoice,
-    engine, setEngine, useNatural, naturalVoice, setNaturalVoice, toggle, stop, jump, speak,
+    engine, setEngine, useNatural, naturalVoice, setNaturalVoice, toggle, stop, jump, speak, getLevel,
   };
 }
 
@@ -256,6 +286,7 @@ export function Presenter({ segments, label = "Listen" }: { segments: Segment[];
   const nv = useNaturalVoice();
   const p = usePresenter(segments, nv.status);
   const [dialog, setDialog] = useState(false);
+  const [face, setFace] = useState(() => read("dena.presenter.avatar") === "on");
   const active = p.index >= 0;
   const parts = useMemo(() => new Set(segments.map((s) => s.anchor)).size, [segments]);
   // Once a download the owner asked for finishes, switch to the natural voice.
@@ -298,6 +329,7 @@ export function Presenter({ segments, label = "Listen" }: { segments: Segment[];
       <button className="btn" onClick={p.stop} aria-label="Stop">⏹ Stop</button>
       <span className="faint small">Part {part} of {parts}{p.loading ? " · preparing…" : ""}</span>
       <span className="presenter-spacer" />
+      <label className="small faint"><input type="checkbox" checked={face} aria-label="Show presenter" onChange={(e) => { setFace(e.target.checked); write("dena.presenter.avatar", e.target.checked ? "on" : "off"); }} /> Show presenter</label>
       <label className="small faint">Speed{" "}
         <select value={p.rate} onChange={(e) => p.setRate(Number(e.target.value))} aria-label="Speed">
           {RATES.map((r) => <option key={r} value={r}>{r}×</option>)}
@@ -331,6 +363,7 @@ export function Presenter({ segments, label = "Listen" }: { segments: Segment[];
         </span>
       )}
       {p.problem && <span className="error small" style={{ flexBasis: "100%" }}>{p.problem}</span>}
+      {face && <Avatar speaking={!p.paused && !p.loading} getLevel={p.getLevel} />}
       {dlg}
     </div>
   );

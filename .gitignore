@@ -7,3 +7,7 @@ node_modules/
 fixtures/private/
 apps/web/dist/
 build/
+
+# The owner's own 3D presenter model: large, and its licence is theirs.
+assets/
+.DS_Store

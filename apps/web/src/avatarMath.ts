@@ -26,3 +26,17 @@ export function pretendLevel(timeMs: number): number {
   const t = timeMs / 1000;
   return 0.03 + 0.07 * Math.abs(Math.sin(t * 5.2)) * (0.6 + 0.4 * Math.sin(t * 2.1 + 1));
 }
+
+/** How closed the eyes are (0 open, 1 shut) `ms` after a blink began: quick down, slightly slower up. */
+export function blinkAmount(ms: number): number {
+  const down = 72;
+  const up = 117;
+  if (ms <= 0 || ms >= down + up) return 0;
+  const ease = (x: number) => x * x * (3 - 2 * x);
+  return ms < down ? ease(ms / down) : 1 - ease((ms - down) / up);
+}
+
+/** Milliseconds until the next blink: usually two to six seconds, so it never looks like a clock. */
+export function nextBlinkIn(rand: () => number = Math.random): number {
+  return 2200 + rand() * 3800;
+}

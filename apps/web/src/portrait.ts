@@ -13,6 +13,8 @@ export const PORTRAIT = {
   mouth: { x: 240, y: 333 },
   /** The sliding part: how wide and tall it is, and how far down the chin sits below the lip line. */
   patch: { halfWidth: 82, height: 112, centreY: 34, radiusY: 78 },
+  /** The eyes, for blinking: where each is, and half its width and height. Remove to turn blinking off. */
+  eyes: { points: [{ x: 193, y: 241 }, { x: 288, y: 241 }], rx: 22, ry: 10 },
   /** Most the lower lip drops, in picture pixels. */
   maxDrop: 14,
 };

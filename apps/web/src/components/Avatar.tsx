@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
-import { follow, mouthOpen, pretendLevel } from "../avatarMath";
+import { blinkAmount, follow, mouthOpen, nextBlinkIn, pretendLevel } from "../avatarMath";
 import { PORTRAIT } from "../portrait";
 
-const { width: W, height: H, mouth, patch: P, maxDrop } = PORTRAIT;
+const { width: W, height: H, mouth, patch: P, maxDrop, eyes } = PORTRAIT;
 
 /**
  * The presenter: the owner's picture, with the lower lip and chin sliding down along the lip line
@@ -10,10 +10,10 @@ const { width: W, height: H, mouth, patch: P, maxDrop } = PORTRAIT;
  * her alive. `getLevel` returns the voice's loudness (0-1), or null when the page cannot hear it
  * (the browser's own voices), in which case the mouth moves on a gentle pattern while speaking.
  */
-export function Avatar({ picture, speaking, getLevel }: { picture: ArrayBuffer; speaking: boolean; getLevel: () => number | null }) {
+export function Avatar({ picture, speaking, getLevel, forceBlink }: { picture: ArrayBuffer; speaking: boolean; getLevel: () => number | null; /** Hold the eyes at this closedness (0-1), for previews. */ forceBlink?: number }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const live = useRef({ speaking, getLevel });
-  live.current = { speaking, getLevel };
+  const live = useRef<{ speaking: boolean; getLevel: () => number | null; forceBlink?: number }>({ speaking, getLevel, forceBlink });
+  live.current = { speaking, getLevel, forceBlink };
 
   useEffect(() => {
     const el = canvas.current;
@@ -40,6 +40,21 @@ export function Avatar({ picture, speaking, getLevel }: { picture: ArrayBuffer; 
       pc.fillRect(-P.radiusY * 2, -P.centreY, P.radiusY * 4, P.height);
       pc.restore();
 
+      // The lids are painted in the skin just above each eye, so they suit whatever picture this is.
+      const lidColour = (x: number, y: number): string => {
+        try {
+          const probe = document.createElement("canvas");
+          probe.width = probe.height = 1;
+          const pc2 = probe.getContext("2d")!;
+          pc2.drawImage(img, x - 8, y + eyes.ry + 8, 16, 5, 0, 0, 1, 1); // the cheek just below, averaged down to one pixel
+          const d = pc2.getImageData(0, 0, 1, 1).data;
+          return [d[0]! * 0.89, d[1]! * 0.86, d[2]! * 0.85].map(Math.round).join(", "); // a lid is a touch shadowed
+        } catch {
+          return "205, 170, 150";
+        }
+      };
+      const lids = eyes ? eyes.points.map((e) => lidColour(e.x, e.y)) : [];
+      let blinkAt = performance.now() + 1500;
       const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
       let open = 0;
       const t0 = performance.now();
@@ -61,6 +76,39 @@ export function Avatar({ picture, speaking, getLevel }: { picture: ArrayBuffer; 
           ctx.translate(-W / 2, -H + open * 1.5);
         }
         ctx.drawImage(img, 0, 0, W, H);
+        if (eyes) {
+          const f = live.current.forceBlink;
+          if (f === undefined && now >= blinkAt + 189) blinkAt = now + nextBlinkIn() + (Math.random() < 0.15 ? -2000 : 0); // now and then, twice in a row
+          const b = f ?? blinkAmount(now - blinkAt);
+          if (b > 0.04) {
+            eyes.points.forEach((e, k) => {
+              const edge = e.y - eyes.ry + 2 * eyes.ry * b;
+              ctx.save();
+              ctx.beginPath();
+              ctx.rect(e.x - eyes.rx - 4, e.y - eyes.ry - 4, eyes.rx * 2 + 8, edge - (e.y - eyes.ry) + 4);
+              ctx.clip();
+              // The lid: skin colour, solid in the middle and fading at the rim so it melts into the face.
+              ctx.translate(e.x, e.y);
+              ctx.scale(1, (eyes.ry + 2) / (eyes.rx + 3));
+              const g = ctx.createRadialGradient(0, 0, 0, 0, 0, eyes.rx + 3);
+              g.addColorStop(0, `rgba(${lids[k]}, 1)`);
+              g.addColorStop(0.7, `rgba(${lids[k]}, 0.97)`);
+              g.addColorStop(1, `rgba(${lids[k]}, 0)`);
+              ctx.fillStyle = g;
+              ctx.fillRect(-eyes.rx - 4, -eyes.rx - 4, eyes.rx * 2 + 8, eyes.rx * 2 + 8);
+              ctx.restore();
+              ctx.save();
+              // The lash line along the lid's edge, bowed like a closed eye.
+              ctx.strokeStyle = `rgba(45, 32, 28, ${0.55 * Math.min(1, b * 1.4)})`;
+              ctx.lineWidth = 1.8;
+              ctx.beginPath();
+              ctx.moveTo(e.x - eyes.rx, edge - 1);
+              ctx.quadraticCurveTo(e.x, edge + 2.5 * b, e.x + eyes.rx, edge - 1);
+              ctx.stroke();
+              ctx.restore();
+            });
+          }
+        }
         if (drop > 0.6) {
           // The mouth inside: dark, a little wider as it opens, with the top teeth catching light.
           const rx = 26 + open * 10;

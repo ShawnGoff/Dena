@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { follow, mouthOpen, pretendLevel, rms } from "../src/avatarMath";
+import { blinkAmount, follow, mouthOpen, nextBlinkIn, pretendLevel, rms } from "../src/avatarMath";
 
 describe("avatar math", () => {
   it("measures loudness: silence is 0, a full-swing wave is near 1", () => {
@@ -21,5 +21,21 @@ describe("avatar math", () => {
       expect(v).toBeGreaterThan(0);
       expect(v).toBeLessThan(0.2);
     }
+  });
+});
+
+describe("blinking", () => {
+  it("shuts quickly, reopens a little slower, and is open before and after", () => {
+    expect(blinkAmount(-50)).toBe(0);
+    expect(blinkAmount(0)).toBe(0);
+    expect(blinkAmount(72)).toBeCloseTo(1, 5);
+    expect(blinkAmount(36)).toBeCloseTo(0.5, 5);
+    expect(blinkAmount(72 + 58.5)).toBeCloseTo(0.5, 5);
+    expect(blinkAmount(189)).toBe(0);
+    expect(blinkAmount(5000)).toBe(0);
+  });
+  it("waits two to six seconds between blinks", () => {
+    expect(nextBlinkIn(() => 0)).toBe(2200);
+    expect(nextBlinkIn(() => 1)).toBe(6000);
   });
 });

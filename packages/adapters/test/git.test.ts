@@ -96,7 +96,8 @@ describe("a project in a subfolder of a repository", () => {
     const files = batch.events.filter((e) => e.eventType === "git_commit").flatMap((e) => (e.payload as any).files.map((f: any) => f.path));
     expect(files).toContain("a.ts");
     expect(files.some((f: string) => f.startsWith("src/") || f === "package-lock.json")).toBe(false);
-    expect(gitDir(sub)).toBe(path.join(fs.realpathSync(repo), ".git"));
+    // Compared as the system names them: Windows can spell the same folder two ways ("RUNNER~1" and "runneradmin").
+    expect(fs.realpathSync.native(gitDir(sub)!)).toBe(fs.realpathSync.native(path.join(repo, ".git")));
     expect(gitDir(os.tmpdir())).toBeNull();
   });
 });

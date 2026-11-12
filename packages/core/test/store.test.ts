@@ -114,3 +114,18 @@ describe("Store", () => {
     expect(store.timeline(p.id)).toHaveLength(0); // whole batch rolled back
   });
 });
+
+describe("a Claude session shared by two projects", () => {
+  it("is counted for both, and deleting one project keeps the other's events", () => {
+    const a = store.createProject("a", "/tmp/shared-a");
+    const b = store.createProject("b", "/tmp/shared-b");
+    store.ingest(a.id, batch({ artifacts: [], links: [], gaps: [], events: [ev("a1")] }));
+    store.ingest(b.id, batch({ artifacts: [], links: [], events: [ev("b1"), ev("b2")] }));
+    expect(store.stats(b.id).sessions).toBe(1);
+    store.deleteProject(a.id);
+    expect(store.timeline(b.id).map((e) => e.sourceEventId)).toEqual(["b1", "b2"]);
+    expect(store.gaps(b.id)).toHaveLength(1);
+    store.deleteProject(b.id); // and the session goes with its last project
+    expect(store.db.prepare("SELECT COUNT(*) n FROM session").get()).toEqual({ n: 0 });
+  });
+});

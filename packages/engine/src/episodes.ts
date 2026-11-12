@@ -143,12 +143,14 @@ export function loadEpisodes(store: Store, projectId: string): Omit<Episode, "ev
 }
 
 export function episodeEvents(store: Store, projectId: string, unitId: string): StoredEvent[] {
-  const ids = new Set(
-    (store.db.prepare("SELECT event_id FROM work_unit_event WHERE project_id = ? AND unit_id = ?").all(projectId, unitId) as { event_id: number }[]).map(
-      (r) => r.event_id,
-    ),
+  const ids = (store.db.prepare("SELECT event_id FROM work_unit_event WHERE project_id = ? AND unit_id = ?").all(projectId, unitId) as { event_id: number }[]).map(
+    (r) => r.event_id,
   );
-  return store.timeline(projectId).filter((e) => ids.has(e.id));
+  // Only this episode's rows, in timeline order. Loading the whole project for every episode made
+  // lists of steps slow down with the square of the project's size.
+  const out: StoredEvent[] = [];
+  for (let i = 0; i < ids.length; i += 5_000) out.push(...store.eventsById(projectId, ids.slice(i, i + 5_000)));
+  return out.sort((a, b) => (a.occurredAt < b.occurredAt ? -1 : a.occurredAt > b.occurredAt ? 1 : a.id - b.id));
 }
 
 export interface Chapter {

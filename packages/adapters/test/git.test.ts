@@ -87,3 +87,16 @@ describe("importGit", () => {
     expect(a).toEqual(b);
   });
 });
+
+describe("a project in a subfolder of a repository", () => {
+  it("lists its own files by their path in the project, and finds git's folder", async () => {
+    const { gitDir } = await import("../src/git/git.ts");
+    const sub = path.join(repo, "src");
+    const { batch } = importGit(sub);
+    const files = batch.events.filter((e) => e.eventType === "git_commit").flatMap((e) => (e.payload as any).files.map((f: any) => f.path));
+    expect(files).toContain("a.ts");
+    expect(files.some((f: string) => f.startsWith("src/") || f === "package-lock.json")).toBe(false);
+    expect(gitDir(sub)).toBe(path.join(fs.realpathSync(repo), ".git"));
+    expect(gitDir(os.tmpdir())).toBeNull();
+  });
+});

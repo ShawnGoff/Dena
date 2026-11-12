@@ -80,3 +80,22 @@ process.stdout.write(fs.readFileSync(${JSON.stringify(path.join(dir, "replies"))
     expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual(["text", "text", "tool"]);
   });
 });
+
+describe("a Claude Code that exits before reading the prompt", () => {
+  it.skipIf(process.platform === "win32")("fails the call instead of crashing Dena", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dena-epipe-"));
+    const bin = path.join(dir, "claude");
+    fs.writeFileSync(bin, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const uncaught: unknown[] = [];
+    const seen = (e: unknown) => uncaught.push(e);
+    process.on("uncaughtException", seen);
+    try {
+      await expect(new ClaudeCodeProvider(bin, { answers: "tool" }).generate("s", "x".repeat(2_000_000), { type: "object" })).rejects.toThrow(/Claude Code error/);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off("uncaughtException", seen);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

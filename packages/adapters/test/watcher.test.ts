@@ -119,3 +119,15 @@ describe("FsCapture", () => {
     expect(fileEvents().map((e) => e.payload.file)).toEqual(["src/app.ts"]);
   });
 });
+
+describe("a new file's line count", () => {
+  it("does not count the final newline as a line", () => {
+    const cap = new FsCapture(store, projectId, root);
+    cap.scan();
+    write("src/one.ts", "const only = 1;\n");
+    write("src/none.ts", "");
+    cap.scan();
+    const added = Object.fromEntries(fileEvents().map((e) => [e.payload.file, e.payload.linesAdded]));
+    expect(added).toEqual({ "src/one.ts": 1, "src/none.ts": 0 });
+  });
+});

@@ -251,6 +251,9 @@ export class ClaudeCodeProvider implements Provider {
         resolve({ text: String(o.result ?? ""), json, model: Object.keys(o.modelUsage ?? {})[0] ?? null, costUsd: o.total_cost_usd ?? null, durationMs: o.duration_ms ?? 0,
           tokens: tokensFromUsage(o.usage) });
       });
+      // If Claude Code exits before reading a long prompt, the write fails (EPIPE). Without a
+      // listener that is an uncaught error; the "close" handler above already reports the failure.
+      child.stdin.on("error", () => {});
       child.stdin.end(user);
     });
   }

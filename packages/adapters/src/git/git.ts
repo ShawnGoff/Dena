@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { isSensitivePath, newReport, redactText, type IngestBatch, type NewEvent, type RedactionReport } from "@dena/core";
 
@@ -23,6 +24,26 @@ export function isGitRepo(root: string): boolean {
   } catch {
     return false;
   }
+}
+
+const gitDirs = new Map<string, string | null>();
+
+/**
+ * Where git keeps this folder's HEAD and its log: "<root>/.git" for an ordinary repository, the
+ * repository's own folder when the project is a subfolder of it, and the worktree's private folder
+ * for a linked worktree. Null when the folder is not in a repository.
+ */
+export function gitDir(root: string): string | null {
+  const known = gitDirs.get(root);
+  if (known && fs.existsSync(path.join(known, "HEAD"))) return known;
+  let dir: string | null = null;
+  try {
+    dir = path.resolve(root, git(root, ["rev-parse", "--git-dir"]).trim());
+  } catch {
+    /* not a repository */
+  }
+  gitDirs.set(root, dir);
+  return dir;
 }
 
 export interface FileStat {
@@ -66,7 +87,8 @@ export function importGit(root: string, opts: { maxCommits?: number } = {}): { b
   let log = "";
   try {
     log = git(root, [
-      "log", "--branches", "--date-order", "--numstat", "-M",
+      // --relative: file paths as the project sees them, and only its own files, when the project is a subfolder of the repository.
+      "log", "--branches", "--date-order", "--numstat", "-M", "--relative",
       ...(opts.maxCommits ? [`-n${opts.maxCommits}`] : []),
       `--format=${RS}%H${US}%P${US}%an${US}%aI${US}%cI${US}%D${US}%B${US}`,
     ]);
@@ -115,7 +137,7 @@ export function importGit(root: string, opts: { maxCommits?: number } = {}): { b
       .filter((f) => isSensitivePath(f.path) || LOCKFILE.test(f.path))
       .map((f) => `:(exclude,literal)${f.path}`);
     try {
-      let patch = git(root, ["show", "--format=", "--patch", "-M", sha, "--", ".", ...excludes]);
+      let patch = git(root, ["show", "--format=", "--patch", "-M", "--relative", sha, "--", ".", ...excludes]);
       if (patch.length > DIFF_LIMIT) {
         patch = `${patch.slice(0, DIFF_LIMIT)}\n… [diff truncated by Dena at ${DIFF_LIMIT} chars]\n`;
         report.diffsTruncated++;

@@ -482,3 +482,49 @@ describe("browsing for a folder", () => {
     expect((await req(`/api/browse?path=${encodeURIComponent(home + "/../..")}`)).status).toBe(403);
   });
 });
+
+describe("requests that are not well formed", () => {
+  const raw = (method: string, pathname: string, chunks: Buffer[]) => new Promise<{ status: number; json: any }>((resolve, reject) => {
+    const r = http.request({ host: "127.0.0.1", port: srv.port, path: pathname, method,
+      headers: { "x-dena-token": srv.token, "content-type": "application/json", "content-length": chunks.reduce((n, c) => n + c.length, 0) } }, (res) => {
+      let text = "";
+      res.on("data", (c) => (text += c));
+      res.on("end", () => resolve({ status: res.statusCode!, json: JSON.parse(text) }));
+    });
+    r.on("error", reject);
+    (async () => {
+      for (const c of chunks) {
+        r.write(c);
+        await new Promise((ok) => setTimeout(ok, 50));
+      }
+      r.end();
+    })();
+  });
+
+  it("keeps a character that arrives split across two chunks", async () => {
+    const body = Buffer.from(JSON.stringify({ folder: "café" }));
+    const cut = body.indexOf(0xc3) + 1;
+    const r = await raw("POST", `/api/projects/${pid}/settings`, [body.subarray(0, cut), body.subarray(cut)]);
+    expect(r.json.folder).toBe("café");
+    await req(`/api/projects/${pid}/settings`, { method: "POST", body: { folder: null } });
+  });
+
+  it("answers 400, not 500, to a broken body or address", async () => {
+    expect((await raw("POST", `/api/projects/${pid}/settings`, [Buffer.from("{nope")])).status).toBe(400);
+    expect((await req("/%E0%A4%A", { token: null })).status).toBe(400);
+  });
+});
+
+describe("recording a project whose folder is gone", () => {
+  it("refuses, and does not say it is recording", async () => {
+    const gone = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dena-gone-")));
+    const id = store.createProject("gone", gone).id;
+    fs.rmSync(gone, { recursive: true, force: true });
+    const r = await req(`/api/projects/${id}/recording`, { method: "POST", body: { action: "start" } });
+    expect(r.status).toBe(409);
+    expect(r.json.error).toMatch(/no longer there/);
+    const listed = (await req("/api/projects")).json.find((x: any) => x.id === id);
+    expect(listed).toMatchObject({ recordingState: "stopped", recorderRunning: false });
+    store.deleteProject(id);
+  });
+});

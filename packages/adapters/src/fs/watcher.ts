@@ -126,10 +126,18 @@ export class FsCapture {
     const batch = emptyBatch();
     let changes = 0;
     for (const rel of files) {
+      const prev = this.state.get(rel);
+      // Size and date first: an unchanged file is not opened at all.
+      if (prev) {
+        try {
+          const st = fs.statSync(path.join(this.root, rel));
+          if (prev.size === st.size && prev.mtimeMs === Math.floor(st.mtimeMs)) continue;
+        } catch {
+          continue;
+        }
+      }
       const cur = this.read(rel);
       if (!cur) continue;
-      const prev = this.state.get(rel);
-      if (prev && prev.size === cur.size && prev.mtimeMs === cur.mtimeMs) continue;
       if (baseline) this.commit(rel, cur, this.snapshotOf(rel, cur));
       else if (this.change(batch, rel, prev, cur, "startup_scan")) changes++;
     }
@@ -231,7 +239,7 @@ export class FsCapture {
       batch.artifacts.push({ sourceEventId: sid, role: "diff", artifactType: "diff", uriOrPath: rel,
         content: createTwoFilesPatch(`a/${rel}`, `b/${rel}`, prevText, snapshot, "", "", { context: 3 }) });
     } else if (snapshot !== null && type === "file_created") {
-      added = snapshot.split("\n").length;
+      added = snapshot ? snapshot.split("\n").length - (snapshot.endsWith("\n") ? 1 : 0) : 0; // the final newline ends a line, it does not start one
       batch.artifacts.push({ sourceEventId: sid, role: "content", artifactType: "file_snapshot", uriOrPath: rel, content: snapshot });
     } else if (type === "file_deleted") {
       diffNote = null;

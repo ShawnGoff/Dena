@@ -187,9 +187,11 @@ export async function ingestHooks(store: Store, projectId: string, root: string,
         .prepare("SELECT 1 FROM event WHERE project_id = ? AND event_type = 'prompt_submitted' AND json_extract(payload_json, '$.promptId') = ?")
         .get(projectId, r.prompt_id);
       if (!found && !opts.final && now - Date.parse(r.received_at) < FALLBACK_GRACE_MS) stillPending.push(r);
-      else if (!found)
+      else if (!found) {
         batch.gaps.push({ sessionId, source: SOURCE, fromTime: at, toTime: at,
           reason: `A prompt (${r.prompt_id}) was submitted but is missing from the transcript` });
+        if (sessionId) sessions.add(sessionId); // the gap points at its session, which may have no events yet
+      }
     }
   }
 

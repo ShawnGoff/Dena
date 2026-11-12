@@ -122,7 +122,7 @@ export async function processDueJobs(store: Store, projectId: string, provider: 
   const due = store.db.prepare("SELECT * FROM update_job WHERE project_id = ? AND status = 'queued' AND next_at <= ? ORDER BY id LIMIT 1");
   const set = store.db.prepare("UPDATE update_job SET status = ?, attempts = ?, next_at = ?, last_error = ?, result = ?, updated_at = ? WHERE id = ?");
   for (;;) {
-    if ((cap !== undefined && result.spentUsd >= cap) || (tokenCap !== undefined && result.spentTokens >= tokenCap)) {
+    if ((cap != null && result.spentUsd >= cap) || (tokenCap != null && result.spentTokens >= tokenCap)) {
       result.stoppedForBudget = true;
       break;
     }

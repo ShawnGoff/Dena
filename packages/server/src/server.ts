@@ -802,7 +802,18 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
         if (other) throw new HttpError(409, `This project is already being recorded by another Dena process (pid ${other.pid}). Stop that one first.`);
         const rec = new Recorder(store, p.id, { ...opts.recorder, log: (m) => log(`[${p.name}] ${m}`) });
         recorders.set(p.id, rec);
-        await rec.start();
+        try {
+          await rec.start();
+        } catch (e) {
+          // Nothing is capturing, so nothing may say it is: forget the recorder and put the state back.
+          // (Not rec.stop(): that runs a full final import, for a recorder that never ran.)
+          recorders.delete(p.id);
+          store.setCursor(p.id, "dena", "recorder_heartbeat", "");
+          store.setRecordingState(p.id, "stopped");
+          log(`[${p.name}] could not start recording: ${(e as Error).message}`);
+          throw new HttpError(409, fs.existsSync(p.rootPath) ? "Recording could not start. Dena's log says why."
+            : "This project's folder is no longer there, so there is nothing to record. If it moved, remove the project and add it again from its new place.");
+        }
       } else if (action === "pause" || action === "resume") {
         if (!running) throw new HttpError(409, "Not recording");
         store.setRecordingState(p.id, action === "pause" ? "paused" : "recording"); // the recorder applies it on its next tick
@@ -819,7 +830,12 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
   }
 
   function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, pathname: string) {
-    const rel = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+    let rel: string;
+    try {
+      rel = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+    } catch {
+      throw new HttpError(400, "Malformed address");
+    }
     let file = path.resolve(webDir, rel);
     if (!file.startsWith(webDir + path.sep) && file !== webDir) throw new HttpError(403, "Forbidden");
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(webDir, "index.html"); // client-side routes
@@ -855,12 +871,21 @@ export async function startServer(store: Store, opts: ServerOptions = {}): Promi
       let body: any = null;
       if (req.method === "POST") {
         if (!(req.headers["content-type"] ?? "").startsWith("application/json")) throw new HttpError(415, "JSON only");
-        let raw = "";
+        // Collected as bytes and decoded once: a character split across two chunks would otherwise be mangled.
+        const chunks: Buffer[] = [];
+        let size = 0;
         for await (const chunk of req) {
-          raw += chunk;
-          if (raw.length > 100_000) throw new HttpError(413, "Too large");
+          chunks.push(chunk as Buffer);
+          size += (chunk as Buffer).length;
+          if (size > 400_000) throw new HttpError(413, "Too large"); // the most bytes 100,000 characters can take
         }
-        body = raw ? JSON.parse(raw) : null;
+        const raw = Buffer.concat(chunks).toString("utf8");
+        if (raw.length > 100_000) throw new HttpError(413, "Too large");
+        try {
+          body = raw ? JSON.parse(raw) : null;
+        } catch {
+          throw new HttpError(400, "The request body is not valid JSON");
+        }
       }
       const parts = url.pathname.slice("/api/".length).split("/").filter(Boolean);
       if (req.method === "POST" && parts.length === 2 && parts[0] === "voice" && parts[1] === "speak") {

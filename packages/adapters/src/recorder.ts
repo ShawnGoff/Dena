@@ -66,14 +66,16 @@ export async function importChangedTranscripts(store: Store, projectId: string, 
 
 export function importGitIfChanged(store: Store, projectId: string, root: string, log: (m: string) => void = () => {}) {
   if (!git.isGitRepo(root)) return 0;
-  const head = path.join(root, ".git");
+  // Asked of git rather than assumed to be "<root>/.git": a worktree, a submodule or a project in a
+  // subfolder of a repository keeps it elsewhere, and guessing wrong meant a full re-import every poll.
+  const head = git.gitDir(root);
   let fingerprint = "";
   try {
-    const refs = fs.readFileSync(path.join(head, "HEAD"), "utf8");
-    const logs = path.join(head, "logs", "HEAD");
+    const refs = fs.readFileSync(path.join(head!, "HEAD"), "utf8");
+    const logs = path.join(head!, "logs", "HEAD");
     fingerprint = `${refs.trim()}:${fs.existsSync(logs) ? fs.statSync(logs).size : 0}`;
   } catch {
-    fingerprint = String(Date.now()); // worktrees/submodules: just re-import, it dedups
+    fingerprint = String(Date.now()); // unreadable: just re-import, it dedups
   }
   if (store.getCursor(projectId, git.SOURCE, "fingerprint") === fingerprint) return 0;
   const { batch } = git.importGit(root);

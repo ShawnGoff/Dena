@@ -290,7 +290,7 @@ What the hook stores: ids, file paths, exit codes and timings for this computer'
   ${est.modelCalls} model call${est.modelCalls === 1 ? "" : "s"} for the rest (small steps share calls), ~${Math.round(est.inputChars / 1000)}k characters of recorded activity
   model: ${o.model ?? s.model ?? "your Claude Code default"} · depth: ${o.depth ?? s.depth}
   estimated tokens: ${formatTokens(est.tokensLow)}–${formatTokens(est.tokensHigh)} in total (fewer if no repairs are needed; ${est.tokenBasis})
-  API-equivalent: ${est.estimatedUsd !== null ? `~$${est.estimatedUsd.toFixed(2)} (${est.basis})` : est.basis}${maxUsd !== undefined ? `\n  cap: stops before exceeding $${maxUsd}` : ""}${s.maxTokensPerRun ? `\n  budget: stops at about ${formatTokens(s.maxTokensPerRun)} tokens this run; run it again later to continue where it stopped` : ""}`);
+  API-equivalent: ${est.estimatedUsd !== null ? `~$${est.estimatedUsd.toFixed(2)} (${est.basis})` : est.basis}${maxUsd != null ? `\n  cap: stops before exceeding $${maxUsd}` : ""}${s.maxTokensPerRun ? `\n  budget: stops at about ${formatTokens(s.maxTokensPerRun)} tokens this run; run it again later to continue where it stopped` : ""}`);
         if (!est.modelCalls) {
           if (est.factsOnly) await explainMany(store, p.id, ids, new ClaudeCodeProvider(undefined, { auth: store.projectSettings(p.id).auth ?? "account", effort: flag("effort") ?? store.projectSettings(p.id).effort }), o);
           console.log("Nothing needs a model.");
@@ -478,7 +478,11 @@ Projects you left recording carry on recording. Remove it any time with \`dena s
           } else if (key === "auth") {
             if (value !== "account" && value !== "api-key") throw new Error("auth is account (your Claude subscription) or api-key (billed API credits)");
             store.updateProjectSettings(p.id, { auth: value });
-          } else if (key === "max-usd") store.updateProjectSettings(p.id, { maxUsdPerRun: value === "none" ? undefined : Number(value) });
+          } else if (key === "max-usd") {
+            const n = Number(value);
+            if (value !== "none" && !(value.trim() && Number.isFinite(n) && n > 0)) throw new Error("max-usd is an amount in dollars above zero (e.g. 2.50), or none");
+            store.updateProjectSettings(p.id, { maxUsdPerRun: value === "none" ? undefined : n });
+          }
           else if (key === "max-tokens") {
             const n = Number(String(value).replace(/k$/i, "000"));
             if (value !== "none" && !(n >= 5_000)) throw new Error("max-tokens is a number of tokens (at least 5000, or e.g. 100k), or none");

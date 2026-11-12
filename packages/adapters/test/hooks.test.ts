@@ -234,3 +234,19 @@ describe("transcriptsIn", () => {
     fs.rmSync(d, { recursive: true, force: true });
   });
 });
+
+describe("a prompt the transcript never shows", () => {
+  it("is recorded as a gap without stopping later hook calls", async () => {
+    const spool = path.join(home, "spool", "hooks-2026-10-01.jsonl");
+    fs.mkdirSync(path.dirname(spool), { recursive: true });
+    const t0 = Date.parse("2026-10-01T10:00:00Z");
+    const line = (o: object) => fs.appendFileSync(spool, JSON.stringify({ received_at: new Date(t0).toISOString(), cwd: root, ...o }) + "\n");
+    line({ hook_event_name: "UserPromptSubmit", session_id: "unseen", prompt_id: "pr1" });
+    await ingestHooks(store, pid, root, { now: t0 }); // inside the grace period: it waits
+    line({ hook_event_name: "SessionStart", session_id: "later" });
+    const r = await ingestHooks(store, pid, root, { now: t0 + 60_000 });
+    expect(r.events).toBe(1);
+    expect(store.gaps(pid).map((g) => g.reason)).toContain("A prompt (pr1) was submitted but is missing from the transcript");
+    expect(JSON.parse(store.getCursor(pid, "claude_code.hooks", "pending")!)).toEqual([]);
+  });
+});

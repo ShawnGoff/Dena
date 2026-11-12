@@ -264,8 +264,8 @@ export async function explainMany(
   const avgCall = () => (result.calls ? result.spentUsd / result.calls : 0);
   const avgTokens = () => (result.calls ? result.spentTokens / result.calls : 0);
   // Stop once a cap is reached, or when the next call would likely cross it (judged by this run's average call).
-  const overBudget = () => (maxUsd !== undefined && (result.spentUsd >= maxUsd || result.spentUsd + avgCall() > maxUsd))
-    || (maxTokens !== undefined && (result.spentTokens >= maxTokens || result.spentTokens + avgTokens() > maxTokens));
+  const overBudget = () => (maxUsd != null && (result.spentUsd >= maxUsd || result.spentUsd + avgCall() > maxUsd))
+    || (maxTokens != null && (result.spentTokens >= maxTokens || result.spentTokens + avgTokens() > maxTokens));
 
   const small: { id: string; packet: Packet }[] = [];
   const large: string[] = [];

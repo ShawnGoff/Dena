@@ -143,6 +143,16 @@ export class Store {
       // migration 13): cleared first, or the project row could not be removed.
       for (const t of ["code_symbol_doc", "code_file_doc", "code_call"])
         if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t)) this.db.prepare(`DELETE FROM ${t} WHERE project_id = ?`).run(projectId);
+      // A Claude Code session can touch several projects, but its row belongs to the first project
+      // that imported it. Hand such sessions to another project that uses them, or deleting this
+      // project would take that project's events with it (events cascade from their session).
+      const heir = this.db.prepare(`SELECT project_id p FROM event WHERE session_id = ? AND project_id != ?
+                                    UNION SELECT project_id FROM capture_gap WHERE session_id = ? AND project_id != ? LIMIT 1`);
+      const give = this.db.prepare("UPDATE session SET project_id = ? WHERE id = ?");
+      for (const s of this.db.prepare("SELECT id FROM session WHERE project_id = ?").all(projectId) as { id: string }[]) {
+        const to = heir.get(s.id, projectId, s.id, projectId) as { p: string } | undefined;
+        if (to) give.run(to.p, s.id);
+      }
       this.db.prepare("DELETE FROM project WHERE id = ?").run(projectId);
       this.db.prepare("UPDATE maintenance SET allow_delete = 0 WHERE id = 1").run();
     })();
@@ -479,7 +489,9 @@ export class Store {
     const byActor = this.db
       .prepare("SELECT actor, COUNT(*) AS n FROM event WHERE project_id = ? GROUP BY actor ORDER BY n DESC")
       .all(projectId) as { actor: string; n: number }[];
-    const sessions = (this.db.prepare("SELECT COUNT(*) AS n FROM session WHERE project_id = ?").get(projectId) as { n: number }).n;
+    // A session shared with another project is stored under whichever imported it first, so count by use too.
+    const sessions = (this.db.prepare(`SELECT COUNT(*) AS n FROM (SELECT id FROM session WHERE project_id = ?
+                                       UNION SELECT session_id FROM event WHERE project_id = ? AND session_id IS NOT NULL)`).get(projectId, projectId) as { n: number }).n;
     const links = (
       this.db
         .prepare("SELECT COUNT(*) AS n FROM event_link l JOIN event e ON e.id = l.from_event_id WHERE e.project_id = ?")

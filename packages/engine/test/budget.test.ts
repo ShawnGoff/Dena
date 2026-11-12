@@ -54,3 +54,12 @@ describe("a token budget per run", () => {
     expect(second.explained.filter((x) => !x.cached).length).toBe(2); // only what was left
   });
 });
+
+describe("a spending cap stored as nothing", () => {
+  it("is no cap, not a cap of zero", async () => {
+    store.updateProjectSettings(pid, { maxUsdPerRun: null as any }); // what an unreadable amount used to be saved as
+    const r = await explainMany(store, pid, loadEpisodes(store, pid).map((e) => e.id), new FakeProvider());
+    expect(r.skippedForBudget).toEqual([]);
+    expect(r.explained).toHaveLength(12);
+  });
+});

@@ -228,6 +228,6 @@ The code is an npm workspace: `packages/core` (event store), `packages/adapters`
 
 ## License
 
-Copyright (c) 2026 Shawn Goff. **All rights reserved.** The source is published for viewing only;
-no license to use, copy, modify, run or distribute it is granted without written permission from
-the author. See [LICENSE](LICENSE).
+Dena is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). You may read, run,
+modify and share it for noncommercial purposes. Commercial use (including selling it or offering
+it to others as a service) requires a separate license from the author.
